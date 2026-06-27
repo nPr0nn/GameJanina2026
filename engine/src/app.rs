@@ -203,16 +203,27 @@ impl<G: Game> ApplicationHandler<Graphics> for App<G> {
                     renderer: &*renderer,
                     audio: &mut self.audio,
                 };
+                let mut steps_ran = 0u32;
                 while self.time.next_fixed_step() {
                     game.update(&mut ctx);
+                    steps_ran += 1;
                 }
                 // Take the frame's requests before releasing the borrow on
                 // `self.input` (held immutably by `ctx`).
                 let should_exit = ctx.should_exit;
                 let toggle_fullscreen = ctx.toggle_fullscreen;
 
-                // Edge-triggered input is valid for one frame only.
-                self.input.new_frame();
+                // Edge-triggered input (`pressed`/`released`) and per-frame
+                // deltas are only valid until an update observes them. The
+                // renderer runs every vsync tick but updates run at the fixed
+                // rate, so on displays faster than `target_ups` most render
+                // frames consume zero fixed steps. Clearing unconditionally
+                // here would wipe a press whose edge landed on such a frame
+                // before any `update` ever saw it — a dropped click/keypress.
+                // Only clear once at least one update has consumed the edges.
+                if steps_ran > 0 {
+                    self.input.new_frame();
+                }
 
                 if toggle_fullscreen {
                     let fullscreen = if gfx.window.fullscreen().is_some() {
