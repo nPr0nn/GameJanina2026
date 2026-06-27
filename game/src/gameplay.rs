@@ -55,8 +55,8 @@ pub struct Gameplay {
     spin: f32,
     zoom: f32,
     fps: u32,
-    /// The level authored in the `editor` crate. Drawn as a static backdrop in
-    /// the same virtual-canvas coordinates the editor used.
+    /// The level authored in the `editor` crate, in world coordinates. Drawn
+    /// through the game camera, the same way the editor authored it.
     level: Level,
 }
 
@@ -191,11 +191,12 @@ impl Gameplay {
         canvas.rectangle(self.player.x, self.player.y, 100.0, 100.0, BLACK);
         canvas.draw_texture_ex(&self.cow, self.player, 0.0, 6.0, WHITE);
 
-        canvas.end_mode_2d();
-
-        // The level authored in the editor, drawn in screen space (matching the
-        // editor's coordinates) on top of the demo scene.
+        // The level authored in the editor. Its shapes are in world
+        // coordinates, so it's drawn inside the camera — pan/zoom move it with
+        // the rest of the scene, matching what the editor showed.
         self.level.draw(canvas);
+
+        canvas.end_mode_2d();
 
         // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);

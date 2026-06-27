@@ -1,10 +1,11 @@
 //! A simple, serializable **level format** shared by the game and the editor.
 //!
-//! A [`Level`] is just a list of [`Shape`]s (rectangles and circles) in
-//! virtual-canvas coordinates. The `editor` binary writes one out with
+//! A [`Level`] is just a list of [`Shape`]s (rectangles and circles) in **world
+//! coordinates** — the space a [`Camera2D`](crate::Camera2D) looks at. The
+//! `editor` binary authors them through a camera and writes one out with
 //! [`Level::save`]; the game reads it back with [`Level::load`] and renders it
-//! with [`Level::draw`]. The on-disk form is plain JSON, so levels are
-//! hand-editable and diff-friendly.
+//! with [`Level::draw`] inside its own camera. The on-disk form is plain JSON,
+//! so levels are hand-editable and diff-friendly.
 
 use crate::canvas::Canvas;
 use crate::color::Color;
@@ -16,8 +17,8 @@ use serde::{Deserialize, Serialize};
 /// agree on this location out of the box.
 pub const DEFAULT_LEVEL_PATH: &str = "level.json";
 
-/// A single placed primitive. Coordinates are virtual-canvas pixels (the same
-/// space you draw and click in), so what the editor shows is what the game gets.
+/// A single placed primitive. Coordinates are world-space pixels (what the
+/// camera looks at), so what the editor shows is what the game gets.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Shape {
     /// Axis-aligned rectangle with top-left at `(x, y)`.
@@ -46,7 +47,7 @@ impl Shape {
         }
     }
 
-    /// `true` if `p` (virtual-canvas pixels) lies inside the shape. Used by the
+    /// `true` if `p` (world-space pixels) lies inside the shape. Used by the
     /// editor for click-to-delete hit testing.
     pub fn contains(&self, p: Vec2D) -> bool {
         match *self {
