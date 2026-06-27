@@ -72,11 +72,22 @@ fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
             let y = a.y.min(b.y);
             let width = (a.x - b.x).abs();
             let height = (a.y - b.y).abs();
-            (width >= 2.0 && height >= 2.0).then_some(Shape::Rect { x, y, width, height, color })
+            (width >= 2.0 && height >= 2.0).then_some(Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            })
         }
         Tool::Circle => {
             let radius = a.distance(b);
-            (radius >= 2.0).then_some(Shape::Circle { x: a.x, y: a.y, radius, color })
+            (radius >= 2.0).then_some(Shape::Circle {
+                x: a.x,
+                y: a.y,
+                radius,
+                color,
+            })
         }
     }
 }
@@ -90,7 +101,10 @@ impl Game for Editor {
                 let n = level.shapes.len();
                 (level, format!("Loaded {DEFAULT_LEVEL_PATH} ({n} shapes)"))
             }
-            Err(_) => (Level::new(), format!("New level (no {DEFAULT_LEVEL_PATH} yet)")),
+            Err(_) => (
+                Level::new(),
+                format!("New level (no {DEFAULT_LEVEL_PATH} yet)"),
+            ),
         };
         Self {
             level,
@@ -150,9 +164,16 @@ impl Game for Editor {
         }
 
         // Color selection (number keys 1–6).
-        for (i, key) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6]
-            .iter()
-            .enumerate()
+        for (i, key) in [
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+        ]
+        .iter()
+        .enumerate()
         {
             if ctx.is_key_pressed(*key) {
                 self.color = PALETTE[i];
@@ -192,7 +213,10 @@ impl Game for Editor {
         // S save, O reload from disk.
         if ctx.is_key_pressed(Key::S) {
             self.status = match self.level.save(DEFAULT_LEVEL_PATH) {
-                Ok(()) => format!("Saved {DEFAULT_LEVEL_PATH} ({} shapes)", self.level.shapes.len()),
+                Ok(()) => format!(
+                    "Saved {DEFAULT_LEVEL_PATH} ({} shapes)",
+                    self.level.shapes.len()
+                ),
                 Err(e) => format!("Save failed: {e}"),
             };
         }
@@ -200,7 +224,10 @@ impl Game for Editor {
             self.status = match Level::load(DEFAULT_LEVEL_PATH) {
                 Ok(level) => {
                     self.level = level;
-                    format!("Reloaded {DEFAULT_LEVEL_PATH} ({} shapes)", self.level.shapes.len())
+                    format!(
+                        "Reloaded {DEFAULT_LEVEL_PATH} ({} shapes)",
+                        self.level.shapes.len()
+                    )
                 }
                 Err(e) => format!("Load failed: {e}"),
             };
@@ -220,7 +247,12 @@ impl Game for Editor {
         // Live preview of the shape currently being dragged out, drawn a little
         // translucent so it reads as "not yet placed".
         if let Some(start) = self.drag_start {
-            if let Some(shape) = make_shape(self.tool, start, self.mouse_world(), self.color.with_alpha(0.5)) {
+            if let Some(shape) = make_shape(
+                self.tool,
+                start,
+                self.mouse_world(),
+                self.color.with_alpha(0.5),
+            ) {
                 shape.draw(canvas);
             }
         }
@@ -228,8 +260,18 @@ impl Game for Editor {
         canvas.end_mode_2d();
 
         // Crosshair at the cursor (screen space).
-        canvas.line(self.mouse - Vec2D::new(10.0, 0.0), self.mouse + Vec2D::new(10.0, 0.0), 1.0, WHITE);
-        canvas.line(self.mouse - Vec2D::new(0.0, 10.0), self.mouse + Vec2D::new(0.0, 10.0), 1.0, WHITE);
+        canvas.line(
+            self.mouse - Vec2D::new(10.0, 0.0),
+            self.mouse + Vec2D::new(10.0, 0.0),
+            1.0,
+            WHITE,
+        );
+        canvas.line(
+            self.mouse - Vec2D::new(0.0, 10.0),
+            self.mouse + Vec2D::new(0.0, 10.0),
+            1.0,
+            WHITE,
+        );
 
         // --- HUD ---
         let tool_name = match self.tool {
@@ -238,9 +280,18 @@ impl Game for Editor {
         };
         // Current color swatch + label.
         canvas.rectangle(20.0, 20.0, 28.0, 28.0, self.color);
-        canvas.text(&format!("Tool: {tool_name}   (R rect · C circle)"), 60.0, 22.0, 26.0, WHITE);
         canvas.text(
-            &format!("Color: 1-6     Zoom: {:.2}x   (M-drag pan · wheel zoom · F reset)", self.zoom),
+            &format!("Tool: {tool_name}   (R rect · C circle)"),
+            60.0,
+            22.0,
+            26.0,
+            WHITE,
+        );
+        canvas.text(
+            &format!(
+                "Color: 1-6     Zoom: {:.2}x   (M-drag pan · wheel zoom · F reset)",
+                self.zoom
+            ),
             60.0,
             52.0,
             22.0,
@@ -260,8 +311,8 @@ impl Game for Editor {
 
 fn main() {
     run::<Editor>(Config {
-        width: 1280,
-        height: 720,
+        width: 1920,
+        height: 1080,
         render_width: RENDER_W,
         render_height: RENDER_H,
         title: "juni — level editor".to_string(),
