@@ -7,6 +7,7 @@
 // hints and the key handling in `App::update`).
 
 mod player;
+mod chain;
 mod gameplay;
 mod transition;
 mod movable;

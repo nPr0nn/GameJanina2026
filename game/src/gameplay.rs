@@ -6,6 +6,7 @@
 use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
+use crate::chain::Chain;
 use crate::player::Player;
 
 // A custom fragment shader: an animated rainbow driven by world position and
@@ -60,28 +61,43 @@ pub struct Gameplay {
     /// The level authored in the `editor` crate, in world coordinates. Drawn
     /// through the game camera, the same way the editor authored it.
     level: Level,
-    test_movable: crate::movable::MovableBox, // Kill when conflict
+    chains: Vec<Chain>,
+    chain_anchor: Vec2D,
+    test_movable: crate::movable::MovableBox,
 }
 
 impl Gameplay {
     pub fn new(ctx: &mut Context) -> Self {
         let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
-        let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0)); // Kill when conflict
+        let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
+        let chain_anchor = Vec2D::new(640.0, 100.0);
+        let mut player = Player::new(cow_texture.clone());
+        // Start close to the anchor so all chains begin with visible slack.
+        player.pos = Vec2D::new(640.0, 150.0);
+        // Three chains sharing the same anchor but with different lengths and tints.
+        let chains = vec![
+            Chain::new(chain_anchor, player.pos, 200.0, 6.0, RED),
+            Chain::new(chain_anchor, player.pos, 300.0, 6.0, LIME),
+            Chain::new(chain_anchor, player.pos, 400.0, 6.0, SKYBLUE),
+        ];
+
         Self {
             x: 100.0,
             dir: 1.0,
             mouse: Vec2D::ZERO,
-            test_movable, // kill when conflict
+            test_movable,
             // Compile the custom shader once, up front (raylib's LoadShader).
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
             // Embed + decode the texture and sound once.
             cow: cow_texture.clone(),
-            player: Player::new(cow_texture),
+            player,
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
             fps: 0,
             level: load_level(),
+            chains,
+            chain_anchor,
         }
     }
 
@@ -91,6 +107,13 @@ impl Gameplay {
         self.x = 100.0;
         self.dir = 1.0;
         self.player = Player::new(self.cow.clone());
+        self.player.pos = Vec2D::new(640.0, 150.0);
+        self.chains = vec![
+            Chain::new(self.chain_anchor, self.player.pos, 200.0, 6.0, RED),
+            Chain::new(self.chain_anchor, self.player.pos, 300.0, 6.0, LIME),
+            Chain::new(self.chain_anchor, self.player.pos, 400.0, 6.0, SKYBLUE),
+        ];
+        self.test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         self.spin = 0.0;
         self.zoom = 1.0;
     }
@@ -106,8 +129,31 @@ impl Gameplay {
             ctx.play_sound(&self.pop);
         }
 
-        // Player movement.
-        self.player.update(ctx);
+        // Player movement (constrained by the shortest chain so it cannot overextend).
+        let move_dir = self.player.input_direction(ctx);
+        let desired_delta = move_dir * self.player.speed * ctx.dt;
+        let next_pos = self.player.pos + desired_delta;
+        let min_length = self
+            .chains
+            .iter()
+            .map(|c| c.max_length())
+            .fold(f32::INFINITY, f32::min);
+        let dist = self.chain_anchor.distance(next_pos);
+        if dist > min_length {
+            let clamp_dir = (next_pos - self.chain_anchor)
+                .try_normalize()
+                .unwrap_or(Vec2D::X);
+            self.player.pos = self.chain_anchor + clamp_dir * min_length;
+        } else {
+            self.player.pos = next_pos;
+        }
+
+        // Update every chain's anchors and run physics.
+        for chain in &mut self.chains {
+            chain.set_start(self.chain_anchor);
+            chain.set_end(self.player.pos);
+            chain.update(ctx.dt);
+        }
 
         // Spin the rotating cow at 90 deg/sec.
         self.spin += 90.0 * ctx.dt;
@@ -125,7 +171,7 @@ impl Gameplay {
             self.dir = 1.0;
         }
 
-        self.test_movable.update(ctx); // Kill when conflict
+        self.test_movable.update(ctx);
 
         // Testa se o player colidiu com o movable box, se colidiu, diminui a vel do player e empurra a caixa para a direcao de velocidade do player
         let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
@@ -138,11 +184,10 @@ impl Gameplay {
         } else {
             self.player.player_speed = 500.0; // Restaura a velocidade do player
         }
-
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
-        canvas.clear_background(RED);
+        canvas.clear_background(WHITE);
 
         // A 2D camera following the player and zooming with the wheel.
         let camera = Camera2D {
@@ -198,17 +243,23 @@ impl Gameplay {
         canvas.line(center, cursor, 5.0, DARKBLUE);
 
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
+
+        // Draw all chains and the shared anchor.
+        for chain in &self.chains {
+            chain.draw(canvas);
+        }
+        canvas.circle(self.chain_anchor, 12.0, GOLD);
+
         self.player.draw(canvas);
 
-        
         // The level authored in the editor. Its shapes are in world
         // coordinates, so it's drawn inside the camera — pan/zoom move it with
         // the rest of the scene, matching what the editor showed.
         self.level.draw(canvas);
-        
-        self.test_movable.draw(canvas); // Kill when conflict
+
+        self.test_movable.draw(canvas);
         canvas.end_mode_2d();
-        
+
         // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
         canvas.text(
