@@ -19,6 +19,8 @@ use std::{
 
 const RENDER_W: u32 = 1280;
 const RENDER_H: u32 = 720;
+const GRID_SIZE: f32 = 32.0;
+const GRID_MAJOR_EVERY: i32 = 4;
 
 /// The primitive the left mouse button currently places.
 #[derive(Clone, Copy, PartialEq)]
@@ -77,6 +79,52 @@ impl Editor {
     /// The cursor in world space, through the current camera.
     fn mouse_world(&self) -> Vec2D {
         self.camera().screen_to_world(self.mouse)
+    }
+
+    /// Draw a world-space planning grid that follows the camera.
+    fn draw_grid(&self, canvas: &mut Canvas) {
+        let camera = self.camera();
+        let top_left = camera.screen_to_world(Vec2D::ZERO);
+        let bottom_right = camera.screen_to_world(Vec2D::new(RENDER_W as f32, RENDER_H as f32));
+
+        let min_x = (top_left.x / GRID_SIZE).floor() as i32;
+        let max_x = (bottom_right.x / GRID_SIZE).ceil() as i32;
+        let min_y = (top_left.y / GRID_SIZE).floor() as i32;
+        let max_y = (bottom_right.y / GRID_SIZE).ceil() as i32;
+
+        for ix in min_x..=max_x {
+            let x = ix as f32 * GRID_SIZE;
+            let is_major = ix.rem_euclid(GRID_MAJOR_EVERY) == 0;
+            let color = if is_major {
+                LIGHTGRAY.with_alpha(0.30)
+            } else {
+                LIGHTGRAY.with_alpha(0.12)
+            };
+
+            canvas.line(
+                Vec2D::new(x, top_left.y),
+                Vec2D::new(x, bottom_right.y),
+                1.0,
+                color,
+            );
+        }
+
+        for iy in min_y..=max_y {
+            let y = iy as f32 * GRID_SIZE;
+            let is_major = iy.rem_euclid(GRID_MAJOR_EVERY) == 0;
+            let color = if is_major {
+                LIGHTGRAY.with_alpha(0.30)
+            } else {
+                LIGHTGRAY.with_alpha(0.12)
+            };
+
+            canvas.line(
+                Vec2D::new(top_left.x, y),
+                Vec2D::new(bottom_right.x, y),
+                1.0,
+                color,
+            );
+        }
     }
 }
 
@@ -304,6 +352,9 @@ impl Game for Editor {
         // Everything world-space (the level and the drag preview) goes through
         // the camera, so panning/zooming move them together.
         canvas.begin_mode_2d(self.camera());
+
+        // Planning grid behind the level content.
+        self.draw_grid(canvas);
 
         // Placed shapes.
         self.level.draw(canvas);
