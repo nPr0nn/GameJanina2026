@@ -738,7 +738,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.batch.clear_color.to_wgpu()),
+                        load: wgpu::LoadOp::Clear(crate::color::to_wgpu(self.batch.clear_color)),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
