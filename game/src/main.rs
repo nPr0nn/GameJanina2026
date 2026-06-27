@@ -9,6 +9,7 @@
 mod player;
 mod gameplay;
 mod transition;
+mod movable;
 
 use gameplay::Gameplay; 
 use juni::prelude::*;

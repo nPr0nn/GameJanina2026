@@ -2,8 +2,9 @@ use juni::prelude::*;
 
 pub struct Player {
     pub pos: Vec2D,
-    shape: Vec2D,
-    player_speed: f32,
+    pub shape: Vec2D,
+    pub player_speed: f32,
+    pub velocity: Vec2D,
     cow: Texture,
     portal_activated: bool,
     both_portal_activated: bool,
@@ -26,24 +27,27 @@ impl Player {
             portal_in: Circle::new(Vec2D::ZERO, 50.0),
             portal_out: Circle::new(Vec2D::ZERO, 50.0),
             can_teleportate: true,
+            velocity: Vec2D::ZERO,
         }
     }
 
     pub fn update(&mut self, ctx: &mut Context) {
         // Move the player with WASD or arrow keys.
         let mut dir = Vec2D::ZERO;
+        self.velocity = Vec2D::ZERO;
         if ctx.is_key_down(Key::W) || ctx.is_key_down(Key::Up) {
-            dir.y -= 5.0;
+            self.velocity.y -= 1.0;
         }
         if ctx.is_key_down(Key::S) || ctx.is_key_down(Key::Down) {
-            dir.y += 5.0;
+            self.velocity.y += 1.0;
         }
         if ctx.is_key_down(Key::A) || ctx.is_key_down(Key::Left) {
-            dir.x -= 5.0;
+            self.velocity.x -= 1.0;
         }
         if ctx.is_key_down(Key::D) || ctx.is_key_down(Key::Right) {
-            dir.x += 5.0;
+            self.velocity.x += 1.0;
         }
+
         if ctx.is_key_pressed(Key::Space) {
             self.portal_activated = true;
             if self.last_portal_ativated_in {
@@ -55,9 +59,9 @@ impl Player {
                 self.last_portal_ativated_in = true;
             }
         }
-        if dir != Vec2D::ZERO {
-            dir = dir.normalize();
-            self.pos += dir * self.player_speed * ctx.dt;
+        if self.velocity != Vec2D::ZERO {
+            self.velocity = self.velocity.normalize();
+            self.pos += self.velocity * self.player_speed * ctx.dt;
         }
 
         
