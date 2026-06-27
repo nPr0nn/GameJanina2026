@@ -66,7 +66,7 @@ pub struct Gameplay {
 impl Gameplay {
     pub fn new(ctx: &mut Context) -> Self {
         let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
-        let test_movable = crate::movable::MovableBox::new(Vec2D::new(200.0, 400.0), Vec2D::new(50.0, 50.0)); // Kill when conflict
+        let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0)); // Kill when conflict
         Self {
             x: 100.0,
             dir: 1.0,
@@ -129,13 +129,12 @@ impl Gameplay {
 
         // Testa se o player colidiu com o movable box, se colidiu, diminui a vel do player e empurra a caixa para a direcao de velocidade do player
         let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
-        let box_rect = Rect::new(self.test_movable.pos.x, self.test_movable.pos.y, self.test_movable.shape.x, self.test_movable.shape.y);
+        let box_rect = self.test_movable.rect;
         if player_rect.intersects(&box_rect) {
-            self.player.player_speed = 200.0; // Diminui a velocidade do player
-            let player_velocity = self.player.velocity;
-            let player_direction = (self.player.pos - self.test_movable.pos).normalize();
-            let impulse = player_direction * player_velocity;
+            let player_velocity = self.player.velocity * self.player.player_speed * ctx.dt;
+            let impulse = player_velocity;
             self.test_movable.empurrar(impulse);
+            self.player.player_speed = 200.0; // Diminui a velocidade do player
         } else {
             self.player.player_speed = 500.0; // Restaura a velocidade do player
         }
