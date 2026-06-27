@@ -93,7 +93,7 @@ impl Chain {
             joints,
             segment_length,
             link_size,
-            damping: 0.05,
+            damping: 0.025,
             straightness: 0.7,
             constraint_iterations: 20,
             show_debug: true,
@@ -226,16 +226,22 @@ impl Chain {
             }
         }
 
-        // ── 3. Kill elastic rebound ───────────────────────────────────────────
+        // ── 3. Partial velocity retention for constrained joints ─────────────
         //
-        // Zero the velocity (old_pos = pos) of every joint that was moved by
-        // a constraint.  Without this, the constraint correction becomes a
-        // Verlet velocity next frame and the chain oscillates back — the
-        // "elastic cable" effect.  Joints that were *not* tensioned keep their
-        // (already-damped) residual velocity for a brief natural settle.
+        // Previously we zeroed velocity here completely, which killed all
+        // inertia and made the chain feel mechanical.  Now we keep a small
+        // fraction (INERTIA_KEEP) of the post-constraint velocity so that
+        // past movement bleeds into the next frame: sudden pulls create
+        // ripples, and direction changes feel organic rather than instant.
+        //
+        // INERTIA_KEEP is kept low (0.15) so the chain does not re-introduce
+        // the elastic oscillation that the earlier zeroing was meant to cure —
+        // at this level the ripple decays within a second under normal damping.
+        const INERTIA_KEEP: f32 = 0.15;
         for i in 1..n - 1 {
             if self.was_constrained[i] {
-                self.joints[i].old_pos = self.joints[i].pos;
+                let vel = self.joints[i].pos - self.joints[i].old_pos;
+                self.joints[i].old_pos = self.joints[i].pos - vel * INERTIA_KEEP;
             }
         }
 
@@ -311,9 +317,9 @@ impl Chain {
         // explicitly by lerping all internal joints toward the perfect straight
         // line between the two anchor positions.
         //
-        // The blend uses a quadratic ramp that activates from 85 % endpoint
-        // stretch to 100 %, so the transition from floppy to rigid feels
-        // natural rather than a sudden snap.
+        // The blend uses a quadratic ramp that activates from 92 % endpoint
+        // stretch to 100 %, so the chain stays flexible well into its reach
+        // and only locks into a cable near full extension.
         //
         // This step does NOT violate the max-length constraint: the straight
         // line between two points is the *shortest* path, so every segment on
@@ -326,8 +332,8 @@ impl Chain {
         let endpoint_dist = anchor_pos.distance(end_pos);
         let endpoint_stretch = (endpoint_dist / self.max_length()).clamp(0.0, 1.0);
 
-        if endpoint_stretch > 0.85 {
-            let t = (endpoint_stretch - 0.85) / 0.15;
+        if endpoint_stretch > 0.92 {
+            let t = (endpoint_stretch - 0.92) / 0.08;
             let stiffness = t * t;
             for i in 1..n - 1 {
                 let ratio = i as f32 / (n - 1) as f32;
