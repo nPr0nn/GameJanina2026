@@ -55,10 +55,10 @@ pub mod prelude {
     };
 }
 
-use audio::Audio;
-use input::Input;
 use app::App;
+use audio::Audio;
 use graphics::Graphics;
+use input::Input;
 use renderer::Renderer;
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -133,6 +133,16 @@ impl Context<'_> {
     /// Request the engine to close the window and end the loop.
     pub fn exit(&mut self) {
         self.should_exit = true;
+    }
+
+    /// Set the native window title. On the web this is a no-op because the
+    /// canvas is not a native desktop window.
+    pub fn set_window_title(&mut self, title: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.gfx.window.set_title(title);
+
+        #[cfg(target_arch = "wasm32")]
+        let _ = title;
     }
 
     /// Compile a custom [`Shader`] from WGSL source (raylib's

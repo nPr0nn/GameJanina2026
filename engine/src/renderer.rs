@@ -163,9 +163,21 @@ impl Batch {
         cc: Color,
     ) {
         // Shapes don't sample a texture, so UV is irrelevant (set to 0).
-        self.vertices.push(Vertex { position: self.transform(a), color: ca.to_linear(), uv: [0.0; 2] });
-        self.vertices.push(Vertex { position: self.transform(b), color: cb.to_linear(), uv: [0.0; 2] });
-        self.vertices.push(Vertex { position: self.transform(c), color: cc.to_linear(), uv: [0.0; 2] });
+        self.vertices.push(Vertex {
+            position: self.transform(a),
+            color: ca.to_linear(),
+            uv: [0.0; 2],
+        });
+        self.vertices.push(Vertex {
+            position: self.transform(b),
+            color: cb.to_linear(),
+            uv: [0.0; 2],
+        });
+        self.vertices.push(Vertex {
+            position: self.transform(c),
+            color: cc.to_linear(),
+            uv: [0.0; 2],
+        });
     }
 
     /// Apply the active camera (if any) to a world-space position.
@@ -838,10 +850,18 @@ impl Renderer {
     fn upload_overlay(&self, gfx: &Graphics, color: Color) {
         let (w, h) = (self.render_width as f32, self.render_height as f32);
         let lin = color.to_linear();
-        let v = |x: f32, y: f32| Vertex { position: [x, y], color: lin, uv: [0.0; 2] };
+        let v = |x: f32, y: f32| Vertex {
+            position: [x, y],
+            color: lin,
+            uv: [0.0; 2],
+        };
         let quad = [
-            v(0.0, 0.0), v(w, 0.0), v(w, h),
-            v(0.0, 0.0), v(w, h), v(0.0, h),
+            v(0.0, 0.0),
+            v(w, 0.0),
+            v(w, h),
+            v(0.0, 0.0),
+            v(w, h),
+            v(0.0, h),
         ];
         gfx.queue
             .write_buffer(&self.overlay_buffer, 0, bytemuck::cast_slice(&quad));
@@ -866,8 +886,11 @@ impl Renderer {
                 mapped_at_creation: false,
             });
         }
-        gfx.queue
-            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.batch.vertices));
+        gfx.queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.batch.vertices),
+        );
     }
 }
 

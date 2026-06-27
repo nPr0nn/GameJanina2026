@@ -21,6 +21,7 @@ const RENDER_W: u32 = 1280;
 const RENDER_H: u32 = 720;
 const GRID_SIZE: f32 = 32.0;
 const GRID_MAJOR_EVERY: i32 = 4;
+const WINDOW_TITLE: &str = "juni — level editor";
 
 /// The primitive the left mouse button currently places.
 #[derive(Clone, Copy, PartialEq)]
@@ -62,6 +63,8 @@ struct Editor {
     status: String,
     /// Whether the multiline help overlay is visible.
     show_help: bool,
+    /// Whether the current in-memory level differs from the last saved/reloaded state.
+    is_dirty: bool,
 }
 
 impl Editor {
@@ -87,6 +90,18 @@ impl Editor {
             (world.x / GRID_SIZE).round() * GRID_SIZE,
             (world.y / GRID_SIZE).round() * GRID_SIZE,
         )
+    }
+
+    fn window_title(&self) -> String {
+        if self.is_dirty {
+            format!("{WINDOW_TITLE} — {} *", self.current_path)
+        } else {
+            format!("{WINDOW_TITLE} — {}", self.current_path)
+        }
+    }
+
+    fn refresh_window_title(&self, ctx: &mut Context) {
+        ctx.set_window_title(&self.window_title());
     }
 
     /// Draw a world-space planning grid that follows the camera.
@@ -209,12 +224,12 @@ fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
 }
 
 impl Game for Editor {
-    fn init(_ctx: &mut Context) -> Self {
+    fn init(ctx: &mut Context) -> Self {
         let startup = STARTUP
             .get()
             .expect("editor startup config should be set before run()");
 
-        Self {
+        let editor = Self {
             current_path: startup.path.clone(),
             level: startup.level.clone(),
             tool: Tool::Rect,
@@ -226,7 +241,10 @@ impl Game for Editor {
             pan_last: None,
             status: startup.status.clone(),
             show_help: false,
-        }
+            is_dirty: false,
+        };
+        editor.refresh_window_title(ctx);
+        editor
     }
 
     fn update(&mut self, ctx: &mut Context) {
@@ -308,6 +326,8 @@ impl Game for Editor {
             if let Some(start) = self.drag_start.take() {
                 if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
                     self.level.shapes.push(shape);
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
                     self.status = format!("Placed shape ({} total)", self.level.shapes.len());
                 }
             }
@@ -317,27 +337,37 @@ impl Game for Editor {
         if ctx.is_mouse_button_pressed(MouseButton::Right) {
             if let Some(i) = self.level.shapes.iter().rposition(|s| s.contains(world)) {
                 self.level.shapes.remove(i);
+                self.is_dirty = true;
+                self.refresh_window_title(ctx);
                 self.status = format!("Deleted shape ({} left)", self.level.shapes.len());
             }
         }
 
         // Z undo last, X clear all.
         if ctx.is_key_pressed(Key::Z) && self.level.shapes.pop().is_some() {
+            self.is_dirty = true;
+            self.refresh_window_title(ctx);
             self.status = format!("Undid last ({} left)", self.level.shapes.len());
         }
-        if ctx.is_key_pressed(Key::X) {
+        if ctx.is_key_pressed(Key::X) && !self.level.shapes.is_empty() {
             self.level.shapes.clear();
+            self.is_dirty = true;
+            self.refresh_window_title(ctx);
             self.status = "Cleared all shapes".to_string();
         }
 
         // S save, O reload from disk.
         if ctx.is_key_pressed(Key::S) {
             self.status = match self.level.save(&self.current_path) {
-                Ok(()) => format!(
-                    "Saved {} ({} shapes)",
-                    self.current_path,
-                    self.level.shapes.len()
-                ),
+                Ok(()) => {
+                    self.is_dirty = false;
+                    self.refresh_window_title(ctx);
+                    format!(
+                        "Saved {} ({} shapes)",
+                        self.current_path,
+                        self.level.shapes.len()
+                    )
+                }
                 Err(e) => format!("Save failed: {e}"),
             };
         }
@@ -345,6 +375,8 @@ impl Game for Editor {
             self.status = match Level::load(&self.current_path) {
                 Ok(level) => {
                     self.level = level;
+                    self.is_dirty = false;
+                    self.refresh_window_title(ctx);
                     format!(
                         "Reloaded {} ({} shapes)",
                         self.current_path,
@@ -384,22 +416,25 @@ impl Game for Editor {
 
         canvas.end_mode_2d();
 
-        // Crosshair at the cursor (screen space).
+        // Crosshair at the snapped placement point (screen space), so the
+        // cursor feedback matches where shapes will be created.
+        let snapped_mouse = self
+            .camera()
+            .world_to_screen(self.snap_world(self.mouse_world()));
         canvas.line(
-            self.mouse - Vec2D::new(10.0, 0.0),
-            self.mouse + Vec2D::new(10.0, 0.0),
+            snapped_mouse - Vec2D::new(10.0, 0.0),
+            snapped_mouse + Vec2D::new(10.0, 0.0),
             1.0,
             WHITE,
         );
         canvas.line(
-            self.mouse - Vec2D::new(0.0, 10.0),
-            self.mouse + Vec2D::new(0.0, 10.0),
+            snapped_mouse - Vec2D::new(0.0, 10.0),
+            snapped_mouse + Vec2D::new(0.0, 10.0),
             1.0,
             WHITE,
         );
 
         // --- HUD ---
-
         if self.show_help {
             canvas.rectangle(20.0, 120.0, 520.0, 330.0, BLACK.with_alpha(0.8));
             canvas.text("Editor controls", 40.0, 140.0, 28.0, GOLD);
@@ -468,7 +503,7 @@ fn main() {
         height: 1080,
         render_width: RENDER_W,
         render_height: RENDER_H,
-        title: "juni — level editor".to_string(),
+        title: WINDOW_TITLE.to_string(),
         target_ups: 60,
         centered: true,
         resizable: false,
