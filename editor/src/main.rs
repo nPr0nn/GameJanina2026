@@ -10,8 +10,12 @@
 // `juni::level`. The output (`level.json` in the working directory) is the
 // exact file the game loads.
 
-use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
+use std::{
+    io::{self, Write},
+    path::Path,
+    sync::OnceLock,
+};
 
 const RENDER_W: u32 = 1280;
 const RENDER_H: u32 = 720;
@@ -26,7 +30,17 @@ enum Tool {
 /// Color choices, selectable with the number keys 1–6.
 const PALETTE: [Color; 6] = [RED, ORANGE, GOLD, LIME, SKYBLUE, VIOLET];
 
+#[derive(Debug)]
+struct StartupConfig {
+    path: String,
+    level: Level,
+    status: String,
+}
+
+static STARTUP: OnceLock<StartupConfig> = OnceLock::new();
+
 struct Editor {
+    current_path: String,
     level: Level,
     tool: Tool,
     color: Color,
@@ -44,6 +58,8 @@ struct Editor {
     pan_last: Option<Vec2D>,
     /// Transient status line (last action), shown in the HUD.
     status: String,
+    /// Whether the multiline help overlay is visible.
+    show_help: bool,
 }
 
 impl Editor {
@@ -92,22 +108,59 @@ fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
     }
 }
 
+fn prompt_level_path() -> io::Result<String> {
+    loop {
+        print!("Level path: ");
+        io::stdout().flush()?;
+
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
+
+        let path = line.trim();
+        if !path.is_empty() {
+            return Ok(path.to_string());
+        }
+
+        eprintln!("A level path is required.");
+    }
+}
+
+fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
+    if Path::new(path).exists() {
+        let level = Level::load(path)?;
+        let n = level.shapes.len();
+        Ok(StartupConfig {
+            path: path.to_string(),
+            level,
+            status: format!("Loaded {path} ({n} shapes)"),
+        })
+    } else {
+        if let Some(parent) = Path::new(path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let level = Level::new();
+        level.save(path)?;
+        Ok(StartupConfig {
+            path: path.to_string(),
+            level,
+            status: format!("Created {path} (new level)"),
+        })
+    }
+}
+
 impl Game for Editor {
     fn init(_ctx: &mut Context) -> Self {
-        // Pick up an existing level if one is already on disk, so editing is
-        // iterative rather than starting blank every launch.
-        let (level, status) = match Level::load(DEFAULT_LEVEL_PATH) {
-            Ok(level) => {
-                let n = level.shapes.len();
-                (level, format!("Loaded {DEFAULT_LEVEL_PATH} ({n} shapes)"))
-            }
-            Err(_) => (
-                Level::new(),
-                format!("New level (no {DEFAULT_LEVEL_PATH} yet)"),
-            ),
-        };
+        let startup = STARTUP
+            .get()
+            .expect("editor startup config should be set before run()");
+
         Self {
-            level,
+            current_path: startup.path.clone(),
+            level: startup.level.clone(),
             tool: Tool::Rect,
             color: PALETTE[0],
             drag_start: None,
@@ -115,7 +168,8 @@ impl Game for Editor {
             target: Vec2D::ZERO,
             zoom: 1.0,
             pan_last: None,
-            status,
+            status: startup.status.clone(),
+            show_help: false,
         }
     }
 
@@ -124,6 +178,14 @@ impl Game for Editor {
 
         if ctx.is_key_pressed(Key::Escape) {
             ctx.exit();
+        }
+        if ctx.is_key_pressed(Key::H) {
+            self.show_help = !self.show_help;
+            self.status = if self.show_help {
+                "Help shown".to_string()
+            } else {
+                "Help hidden".to_string()
+            };
         }
 
         // --- Camera: middle-drag pans, wheel zooms about the cursor. ---
@@ -212,20 +274,22 @@ impl Game for Editor {
 
         // S save, O reload from disk.
         if ctx.is_key_pressed(Key::S) {
-            self.status = match self.level.save(DEFAULT_LEVEL_PATH) {
+            self.status = match self.level.save(&self.current_path) {
                 Ok(()) => format!(
-                    "Saved {DEFAULT_LEVEL_PATH} ({} shapes)",
+                    "Saved {} ({} shapes)",
+                    self.current_path,
                     self.level.shapes.len()
                 ),
                 Err(e) => format!("Save failed: {e}"),
             };
         }
         if ctx.is_key_pressed(Key::O) {
-            self.status = match Level::load(DEFAULT_LEVEL_PATH) {
+            self.status = match Level::load(&self.current_path) {
                 Ok(level) => {
                     self.level = level;
                     format!(
-                        "Reloaded {DEFAULT_LEVEL_PATH} ({} shapes)",
+                        "Reloaded {} ({} shapes)",
+                        self.current_path,
                         self.level.shapes.len()
                     )
                 }
@@ -274,42 +338,70 @@ impl Game for Editor {
         );
 
         // --- HUD ---
-        let tool_name = match self.tool {
-            Tool::Rect => "Rect",
-            Tool::Circle => "Circle",
-        };
-        // Current color swatch + label.
-        canvas.rectangle(20.0, 20.0, 28.0, 28.0, self.color);
-        canvas.text(
-            &format!("Tool: {tool_name}   (R rect · C circle)"),
-            60.0,
-            22.0,
-            26.0,
-            WHITE,
-        );
-        canvas.text(
-            &format!(
-                "Color: 1-6     Zoom: {:.2}x   (M-drag pan · wheel zoom · F reset)",
-                self.zoom
-            ),
-            60.0,
-            52.0,
-            22.0,
-            LIGHTGRAY,
-        );
 
-        canvas.text(
-            "L-drag place · R-click delete · Z undo · X clear · S save · O reload · Esc quit",
-            20.0,
-            RENDER_H as f32 - 60.0,
-            22.0,
-            WHITE,
-        );
+        if self.show_help {
+            canvas.rectangle(20.0, 120.0, 520.0, 330.0, BLACK.with_alpha(0.8));
+            canvas.text("Editor controls", 40.0, 140.0, 28.0, GOLD);
+
+            canvas.text("Mouse", 40.0, 182.0, 24.0, WHITE);
+            canvas.text("L-drag      Place shape", 60.0, 210.0, 22.0, LIGHTGRAY);
+            canvas.text("R-click     Delete shape", 60.0, 236.0, 22.0, LIGHTGRAY);
+            canvas.text("M-drag      Pan camera", 60.0, 262.0, 22.0, LIGHTGRAY);
+            canvas.text("Wheel       Zoom", 60.0, 288.0, 22.0, LIGHTGRAY);
+
+            canvas.text("Tools", 40.0, 330.0, 24.0, WHITE);
+            canvas.text("R / C       Select tool", 60.0, 358.0, 22.0, LIGHTGRAY);
+            canvas.text("1-6         Select color", 60.0, 384.0, 22.0, LIGHTGRAY);
+
+            canvas.text("File", 290.0, 182.0, 24.0, WHITE);
+            canvas.text("S           Save level", 310.0, 210.0, 22.0, LIGHTGRAY);
+            canvas.text("O           Reload level", 310.0, 236.0, 22.0, LIGHTGRAY);
+
+            canvas.text("Other", 290.0, 288.0, 24.0, WHITE);
+            canvas.text("Z           Undo last", 310.0, 316.0, 22.0, LIGHTGRAY);
+            canvas.text(
+                "X           Clear all shapes",
+                310.0,
+                342.0,
+                22.0,
+                LIGHTGRAY,
+            );
+            canvas.text("F           Reset view", 310.0, 368.0, 22.0, LIGHTGRAY);
+            canvas.text(
+                "H           Toggle this help",
+                310.0,
+                394.0,
+                22.0,
+                LIGHTGRAY,
+            );
+            canvas.text("Esc         Quit", 310.0, 420.0, 22.0, LIGHTGRAY);
+        }
+
         canvas.text(&self.status, 20.0, RENDER_H as f32 - 32.0, 22.0, GOLD);
     }
 }
 
 fn main() {
+    let path = match prompt_level_path() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Failed to read level path: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let startup = match load_or_create_level(&path) {
+        Ok(startup) => startup,
+        Err(e) => {
+            eprintln!("Failed to open or create level at {path}: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    STARTUP
+        .set(startup)
+        .expect("editor startup config should only be set once");
+
     run::<Editor>(Config {
         width: 1920,
         height: 1080,
