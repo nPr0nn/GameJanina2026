@@ -78,8 +78,12 @@ impl TextEngine {
         // MSAA resolve), so its pipeline is single-sampled regardless of how many
         // samples the scene uses.
         let mut atlas = atlas;
-        let renderer =
-            TextRenderer::new(&mut atlas, &gfx.device, wgpu::MultisampleState::default(), None);
+        let renderer = TextRenderer::new(
+            &mut atlas,
+            &gfx.device,
+            wgpu::MultisampleState::default(),
+            None,
+        );
 
         Self {
             font_system,
