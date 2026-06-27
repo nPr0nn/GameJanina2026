@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link data-trunk rel="rust" data-bin="juni" />
+    <title>juni</title>
+    <style type="text/css">
+            /* The Rust side pins the canvas *backing buffer* to a fixed, modest
+               resolution (Config::width/height) so the wgpu surface stays small
+               — see src/app.rs. Here we only handle *display*: stretch that
+               fixed canvas to fill the viewport and let the browser upscale.
+
+               `object-fit: contain` aspect-fits the backing buffer inside the
+               viewport (black bars where the aspect differs), so nothing is
+               distorted. `!important` overrides the inline width/height winit
+               writes onto the canvas (its fixed pixel size), which would
+               otherwise overflow the viewport and show scrollbars. */
+            body {
+                margin: 0;
+                overflow: hidden;
+                background: #000;
+            }
+            canvas {
+                display: block;
+                width: 100vw !important;
+                height: 100vh !important;
+                object-fit: contain;
+            }
+            canvas:focus {
+                outline: none
+            }
+        </style>
+</head>
+<body></body>
+
+</html>

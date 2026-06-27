@@ -1,0 +1,10 @@
+[build]
+target = "index.html"
+
+[serve]
+# Bind an explicit loopback address. Trunk otherwise advertises
+# `http://localhost.:8080/` (note the trailing dot) which some browsers refuse
+# to connect to. Open http://127.0.0.1:8080 in your browser.
+addresses = ["127.0.0.1"]
+port = 8080
+open = false
