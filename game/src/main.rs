@@ -6,10 +6,11 @@
 // between them. Everything is driven by the keyboard for now (see the on-screen
 // hints and the key handling in `App::update`).
 
+mod player;
 mod gameplay;
 mod transition;
 
-use gameplay::Gameplay;
+use gameplay::Gameplay; 
 use juni::prelude::*;
 use transition::{Screen, Transition};
 
