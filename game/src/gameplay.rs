@@ -6,6 +6,8 @@
 use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
+use crate::player::Player;
+
 // A custom fragment shader: an animated rainbow driven by world position and
 // `globals.time`. Same vertex/uniform interface as the built-in shape shader,
 // so it plugs straight into `begin_shader_mode`.
@@ -47,7 +49,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 pub struct Gameplay {
     x: f32,
     dir: f32,
-    player: Vec2D,
+    player: Player,
     mouse: Vec2D,
     rainbow: Shader,
     cow: Texture,
@@ -55,22 +57,23 @@ pub struct Gameplay {
     spin: f32,
     zoom: f32,
     fps: u32,
-    /// The level authored in the `editor` crate. Drawn as a static backdrop in
-    /// the same virtual-canvas coordinates the editor used.
+    /// The level authored in the `editor` crate, in world coordinates. Drawn
+    /// through the game camera, the same way the editor authored it.
     level: Level,
 }
 
 impl Gameplay {
     pub fn new(ctx: &mut Context) -> Self {
+        let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
         Self {
             x: 100.0,
             dir: 1.0,
-            player: Vec2D::ZERO,
             mouse: Vec2D::ZERO,
             // Compile the custom shader once, up front (raylib's LoadShader).
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
             // Embed + decode the texture and sound once.
-            cow: ctx.load_texture_from_memory(include_bytes!("assets/vaca.png")),
+            cow: cow_texture.clone(),
+            player: Player::new(cow_texture.clone()),
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
@@ -84,7 +87,7 @@ impl Gameplay {
     pub fn reset(&mut self) {
         self.x = 100.0;
         self.dir = 1.0;
-        self.player = Vec2D::ZERO;
+        self.player = Player::new(self.cow.clone());
         self.spin = 0.0;
         self.zoom = 1.0;
     }
@@ -101,18 +104,7 @@ impl Gameplay {
         }
 
         // Player movement.
-        if ctx.is_key_down(Key::W) {
-            self.player.y -= 5.0;
-        }
-        if ctx.is_key_down(Key::A) {
-            self.player.x -= 5.0;
-        }
-        if ctx.is_key_down(Key::S) {
-            self.player.y += 5.0;
-        }
-        if ctx.is_key_down(Key::D) {
-            self.player.x += 5.0;
-        }
+        self.player.update(ctx);
 
         // Spin the rotating cow at 90 deg/sec.
         self.spin += 90.0 * ctx.dt;
@@ -136,7 +128,7 @@ impl Gameplay {
 
         // A 2D camera following the player and zooming with the wheel.
         let camera = Camera2D {
-            target: self.player + Vec2D::new(50.0, 50.0),
+            target: self.player.pos + Vec2D::new(50.0, 50.0),
             offset: Vec2D::new(640.0, 360.0),
             rotation: 0.0,
             zoom: self.zoom,
@@ -188,14 +180,14 @@ impl Gameplay {
         canvas.line(center, cursor, 5.0, DARKBLUE);
 
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
-        canvas.rectangle(self.player.x, self.player.y, 100.0, 100.0, BLACK);
-        canvas.draw_texture_ex(&self.cow, self.player, 0.0, 6.0, WHITE);
+        self.player.draw(canvas);
+
+        // The level authored in the editor. Its shapes are in world
+        // coordinates, so it's drawn inside the camera — pan/zoom move it with
+        // the rest of the scene, matching what the editor showed.
+        self.level.draw(canvas);
 
         canvas.end_mode_2d();
-
-        // The level authored in the editor, drawn in screen space (matching the
-        // editor's coordinates) on top of the demo scene.
-        self.level.draw(canvas);
 
         // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
