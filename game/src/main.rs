@@ -75,7 +75,8 @@ impl Game for Demo {
             spin: 0.0,
             zoom: 1.0,
         }
-    }
+
+   }
 
     fn update(&mut self, ctx: &mut Context) {
         // Track the cursor in virtual-canvas coordinates.
@@ -126,7 +127,7 @@ impl Game for Demo {
     }
 
     fn draw(&mut self, canvas: &mut Canvas) {
-        canvas.clear_background(WHITE);
+        canvas.clear_background(RED);
 
         // View the whole scene through a 2D camera that follows the player
         // (its center pinned to the screen center) and zooms with the wheel.
@@ -177,7 +178,6 @@ impl Game for Demo {
         canvas.end_shader_mode();
 
         // A circle and a regular polygon (pentagon).
-        canvas.circle(Vec2D::new(960.0, 480.0), 70.0, PURPLE);
         canvas.regular_polygon(Vec2D::new(1140.0, 480.0), 5, 70.0, -90.0, ORANGE);
 
         canvas.draw_texture_ex(&self.cow, Vec2D::new(520.0, 230.0), 180.0, 6.0, WHITE);

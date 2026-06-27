@@ -11,7 +11,7 @@ path = "src/lib.rs"
 winit = { version = "0.30.12" }
 env_logger = { version = "0.11.5" }
 log = { version = "0.4.22" }
-wgpu = { version = "27.0.1" }
+wgpu = { version = "29" }
 pollster = { version = "0.4.0" }
 glam = { version = "0.33" }
 bytemuck = { version = "1", features = ["derive"] }
@@ -39,4 +39,4 @@ cpal = { version = "0.17", features = ["wasm-bindgen"] }
 # Use the WebGL2 backend on the web. It is supported by every modern browser,
 # whereas WebGPU is still gated/experimental in many of them — without this the
 # build traps with "Could not get an adapter" on browsers lacking WebGPU.
-wgpu = { version = "27.0.1", features = ["webgl"] }
+wgpu = { version = "29", features = ["webgl"] }
