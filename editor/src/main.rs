@@ -81,6 +81,14 @@ impl Editor {
         self.camera().screen_to_world(self.mouse)
     }
 
+    /// Snap a world-space point to the editor grid.
+    fn snap_world(&self, world: Vec2D) -> Vec2D {
+        Vec2D::new(
+            (world.x / GRID_SIZE).round() * GRID_SIZE,
+            (world.y / GRID_SIZE).round() * GRID_SIZE,
+        )
+    }
+
     /// Draw a world-space planning grid that follows the camera.
     fn draw_grid(&self, canvas: &mut Canvas) {
         let camera = self.camera();
@@ -262,8 +270,10 @@ impl Game for Editor {
             self.status = "View reset".to_string();
         }
 
-        // The cursor in world space — what shapes are placed and hit-tested in.
+        // Raw cursor in world space for hit testing, plus snapped world space
+        // for shape placement.
         let world = self.mouse_world();
+        let snapped_world = self.snap_world(world);
 
         // Tool selection.
         if ctx.is_key_pressed(Key::R) {
@@ -292,11 +302,11 @@ impl Game for Editor {
 
         // Left button: drag to place a shape (in world space).
         if ctx.is_mouse_button_pressed(MouseButton::Left) {
-            self.drag_start = Some(world);
+            self.drag_start = Some(snapped_world);
         }
         if ctx.is_mouse_button_released(MouseButton::Left) {
             if let Some(start) = self.drag_start.take() {
-                if let Some(shape) = make_shape(self.tool, start, world, self.color) {
+                if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
                     self.level.shapes.push(shape);
                     self.status = format!("Placed shape ({} total)", self.level.shapes.len());
                 }
@@ -365,7 +375,7 @@ impl Game for Editor {
             if let Some(shape) = make_shape(
                 self.tool,
                 start,
-                self.mouse_world(),
+                self.snap_world(self.mouse_world()),
                 self.color.with_alpha(0.5),
             ) {
                 shape.draw(canvas);
