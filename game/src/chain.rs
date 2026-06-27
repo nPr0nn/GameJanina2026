@@ -1,5 +1,7 @@
 use juni::prelude::*;
 
+use crate::collision::{move_point_swept, push_point_out_of_aabb};
+
 #[derive(Debug, Clone, Copy)]
 struct Joint {
     pos: Vec2D,
@@ -61,8 +63,12 @@ pub struct Chain {
     pub show_debug: bool,
     color: Color,
     /// Scratch buffer reused every frame to track which joints were moved by
-    /// a constraint (avoids a heap allocation per update).
+    /// a distance constraint (avoids a heap allocation per update).
     was_constrained: Vec<bool>,
+    /// Scratch buffer: joints pushed out of an obstacle this frame.
+    /// These skip the stiffness snap and the straightening pass so the snap
+    /// cannot push them back through geometry.
+    obstacle_constrained: Vec<bool>,
 }
 
 impl Chain {
@@ -99,6 +105,7 @@ impl Chain {
             show_debug: true,
             color,
             was_constrained: vec![false; n],
+            obstacle_constrained: vec![false; n],
         }
     }
 
@@ -144,29 +151,82 @@ impl Chain {
         (actual / self.max_length()).clamp(0.0, 1.0)
     }
 
+    /// Returns the tether point and maximum reach for the player this frame.
+    ///
+    /// When the chain is wrapping around obstacles, the player's reachable
+    /// radius is *not* the full chain length from the anchor — it is the
+    /// remaining free length measured from the last joint that was in contact
+    /// with an obstacle surface.  This method exposes that contact point and
+    /// the remaining length so the caller can apply the correct constraint.
+    ///
+    /// When no obstacle contact exists (chain is freely swinging), returns the
+    /// fixed anchor position and the total chain length, which is identical to
+    /// a straight-line anchor constraint.
+    ///
+    /// Must be called **after** [`update`](Self::update) so `obstacle_constrained`
+    /// reflects the current frame.
+    pub fn player_tether(&self) -> (Vec2D, f32) {
+        let n = self.joints.len();
+        // Walk backwards from the player end to find the last obstacle contact.
+        let contact_idx = self.obstacle_constrained[..n - 1]
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &c)| c)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let free_length = (n - 1 - contact_idx) as f32 * self.segment_length;
+        (self.joints[contact_idx].pos, free_length)
+    }
+
     /// Advance the simulation by `dt` seconds.
     ///
     /// Both anchors must be pinned via [`set_start`](Self::set_start) /
     /// [`set_end`](Self::set_end) **before** calling this.
-    pub fn update(&mut self, dt: f32) {
+    ///
+    /// `obstacles` is a slice of axis-aligned rectangles that chain joints
+    /// cannot pass through.  The collision pass runs interleaved with the
+    /// distance constraints so wrapping around corners converges naturally:
+    /// joints near a corner get pushed to different faces by successive
+    /// iterations, threading the chain around the obstacle automatically.
+    pub fn update(&mut self, dt: f32, obstacles: &[Rect]) {
         let n = self.joints.len();
         if n < 2 {
             return;
         }
 
+        // ── 0. Re-establish the "outside all obstacles" invariant ─────────────
+        //
+        // The whole no-teleport guarantee rests on one invariant: at the start
+        // of every operation each internal joint is OUTSIDE every obstacle.
+        // That holds frame-to-frame because all movement below is swept.  The
+        // only way a joint can be inside here is a fresh spawn whose initial
+        // straight line crossed a block, so a one-time static push-out (nearest
+        // face) is correct — it is not a gameplay teleport.
+        for i in 1..n - 1 {
+            for &rect in obstacles {
+                if let Some((p, _)) = push_point_out_of_aabb(self.joints[i].pos, rect) {
+                    self.joints[i].pos = p;
+                    self.joints[i].old_pos = p;
+                }
+            }
+        }
+
         // ── 1. Residual inertia for slack joints ──────────────────────────────
         //
-        // A small Verlet step is applied to internal joints.  With the default
-        // damping = 0.05, the per-frame retention is ~0.95 (at 60 fps), so slack
-        // joints settle in well under a second.  Constrained joints will have
-        // their velocity zeroed in step 3, so inertia only manifests for links
-        // that are genuinely free (not under tension).
+        // A small Verlet step is applied to internal joints.  Constrained joints
+        // have their velocity zeroed in step 3, so inertia only manifests for
+        // links that are genuinely free (not under tension).  The integrated
+        // motion is applied through `move_point_swept` so a fast-moving slack
+        // joint can never tunnel into a block.
         if self.damping > 0.0 {
             let retention = self.damping.powf(dt);
             for i in 1..n - 1 {
                 let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
+                let target = self.joints[i].pos + vel;
                 self.joints[i].old_pos = self.joints[i].pos;
-                self.joints[i].pos += vel;
+                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles);
+                self.joints[i].pos = moved;
             }
         } else {
             // Sync old_pos so old data never leaks if damping is later enabled.
@@ -195,34 +255,50 @@ impl Chain {
         let sl = self.segment_length;
         let sl_sq = sl * sl;
         self.was_constrained.iter_mut().for_each(|c| *c = false);
+        self.obstacle_constrained.iter_mut().for_each(|c| *c = false);
 
+        // Every constraint correction is applied through `move_point_swept`:
+        // the joint is moved *from its current (known-good) position* toward the
+        // corrected target, stopping at any block surface in between.  Because a
+        // max-length correction always pulls a joint TOWARD a neighbour (never
+        // away), swept-clamping it can only make the segment shorter — it can
+        // never re-introduce a length violation, and it can never carry the
+        // joint to the far side of a block.  Wrapping around corners falls out
+        // for free: a blocked joint slides along the face toward the corner over
+        // successive iterations.
         for _ in 0..self.constraint_iterations {
-            // Pass A: player end → anchor
+            // Pass A: player end → anchor.
             for i in (1..n - 1).rev() {
-                // Joint i+1 is the player-side neighbour (higher index = closer to player).
-                let delta = self.joints[i].pos - self.joints[i + 1].pos;
+                let neighbour = self.joints[i + 1].pos;
+                let delta = self.joints[i].pos - neighbour;
                 let dist_sq = delta.length_squared();
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
-                    // Move joint i toward joint i+1 until the segment is exactly sl.
-                    self.joints[i].pos = self.joints[i + 1].pos + delta * (sl / dist);
+                    let target = neighbour + delta * (sl / dist);
+                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    self.joints[i].pos = moved;
                     self.was_constrained[i] = true;
+                    if hit {
+                        self.obstacle_constrained[i] = true;
+                    }
                 }
-                // i == 0 is the fixed anchor — skipped by the range 1..n-1.
             }
 
-            // Pass B: anchor → player end
+            // Pass B: anchor → player end.
             for i in 1..n - 1 {
-                // Joint i-1 is the anchor-side neighbour (lower index = closer to anchor).
-                let delta = self.joints[i].pos - self.joints[i - 1].pos;
+                let neighbour = self.joints[i - 1].pos;
+                let delta = self.joints[i].pos - neighbour;
                 let dist_sq = delta.length_squared();
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
-                    // Move joint i toward joint i-1 until the segment is exactly sl.
-                    self.joints[i].pos = self.joints[i - 1].pos + delta * (sl / dist);
+                    let target = neighbour + delta * (sl / dist);
+                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    self.joints[i].pos = moved;
                     self.was_constrained[i] = true;
+                    if hit {
+                        self.obstacle_constrained[i] = true;
+                    }
                 }
-                // i == n-1 is the player-end anchor — skipped by the range 1..n-1.
             }
         }
 
@@ -239,7 +315,11 @@ impl Chain {
         // at this level the ripple decays within a second under normal damping.
         const INERTIA_KEEP: f32 = 0.15;
         for i in 1..n - 1 {
-            if self.was_constrained[i] {
+            if self.obstacle_constrained[i] {
+                // Joints resting against a wall must not carry velocity or they
+                // would try to move through the obstacle next frame.
+                self.joints[i].old_pos = self.joints[i].pos;
+            } else if self.was_constrained[i] {
                 let vel = self.joints[i].pos - self.joints[i].old_pos;
                 self.joints[i].old_pos = self.joints[i].pos - vel * INERTIA_KEEP;
             }
@@ -259,6 +339,18 @@ impl Chain {
         // slightly extended and full-force only near maximum stretch.
         // Eight sub-iterations per frame ensures the chain converges to a
         // cable-straight line within one or two frames when fully taut.
+        // Stiffness is driven by PATH stretch (`self.stretch()`), not straight-
+        // line endpoint distance, so a chain wrapped tightly around a block
+        // still reads as "taut" and stiffens its free spans correctly.  The old
+        // straight-line "snap toward the anchor→player line" step was removed
+        // entirely: that line cuts through any block the chain wraps, and no
+        // amount of guarding made it safe — it was the primary teleport source.
+        //
+        // Every bend correction is swept, so pulling a joint toward its
+        // neighbours' midpoint can at most press it against a block face; it can
+        // never drag it through to the other side.  This is what lets the chain
+        // pull taut around a corner — even loop fully around a block — without
+        // ever popping through.
         let under_tension = self.was_constrained[1..n - 1].iter().any(|&c| c);
         let stretch = self.stretch();
         if under_tension && self.straightness > 0.0 && stretch > 0.1 {
@@ -268,77 +360,59 @@ impl Chain {
                 for i in 1..n - 1 {
                     let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
                     let current = self.joints[i].pos;
-                    let correction = (ideal - current) * strength;
-                    self.joints[i].pos += correction;
-                    max_delta_sq = max_delta_sq.max(correction.length_squared());
+                    let target = current + (ideal - current) * strength;
+                    let (moved, hit) = move_point_swept(current, target, obstacles);
+                    self.joints[i].pos = moved;
+                    if hit {
+                        self.obstacle_constrained[i] = true;
+                    }
+                    max_delta_sq = max_delta_sq.max(moved.distance_squared(current));
                 }
                 if max_delta_sq < 0.01 {
                     break; // converged – no need for more sub-iterations
                 }
             }
-            // Suppress straightening-induced velocity.
-            for i in 1..n - 1 {
-                self.joints[i].old_pos = self.joints[i].pos;
-            }
 
-            // ── 4b. Re-enforce constraints broken by straightening ─────────────
+            // ── 4b. Re-enforce max-length broken by straightening (swept) ──────
             //
-            // Straightening can push a joint toward its neighbours' midpoint in a
-            // way that exceeds segment_length with one of its adjacent joints.
-            // A short constraint pass here resolves those violations within the
-            // same frame so they cannot feed back as wobble next frame.
+            // Pulling toward the midpoint can stretch a joint past segment_length
+            // from one of its neighbours.  A short swept constraint pass resolves
+            // those violations in-frame so they cannot feed back as wobble.
             for _ in 0..5 {
                 for i in (1..n - 1).rev() {
-                    let delta = self.joints[i].pos - self.joints[i + 1].pos;
+                    let neighbour = self.joints[i + 1].pos;
+                    let delta = self.joints[i].pos - neighbour;
                     let dist_sq = delta.length_squared();
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
-                        self.joints[i].pos = self.joints[i + 1].pos + delta * (sl / dist);
-                        self.joints[i].old_pos = self.joints[i].pos;
+                        let target = neighbour + delta * (sl / dist);
+                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        self.joints[i].pos = moved;
+                        if hit {
+                            self.obstacle_constrained[i] = true;
+                        }
                     }
                 }
                 for i in 1..n - 1 {
-                    let delta = self.joints[i].pos - self.joints[i - 1].pos;
+                    let neighbour = self.joints[i - 1].pos;
+                    let delta = self.joints[i].pos - neighbour;
                     let dist_sq = delta.length_squared();
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
-                        self.joints[i].pos = self.joints[i - 1].pos + delta * (sl / dist);
-                        self.joints[i].old_pos = self.joints[i].pos;
+                        let target = neighbour + delta * (sl / dist);
+                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        self.joints[i].pos = moved;
+                        if hit {
+                            self.obstacle_constrained[i] = true;
+                        }
                     }
                 }
             }
-        }
 
-        // ── 5. Endpoint-stretch stiffness snap ────────────────────────────────
-        //
-        // When the straight-line distance between the two anchors is near the
-        // chain's maximum length, the chain physically cannot bend — every
-        // valid configuration is essentially a straight line.  We enforce this
-        // explicitly by lerping all internal joints toward the perfect straight
-        // line between the two anchor positions.
-        //
-        // The blend uses a quadratic ramp that activates from 92 % endpoint
-        // stretch to 100 %, so the chain stays flexible well into its reach
-        // and only locks into a cable near full extension.
-        //
-        // This step does NOT violate the max-length constraint: the straight
-        // line between two points is the *shortest* path, so every segment on
-        // that line is shorter than or equal to segment_length.
-        //
-        // NOTE: when world collision is added, skip this for joints held
-        // against a wall so the snap cannot push them through geometry.
-        let anchor_pos = self.joints[0].pos;
-        let end_pos = self.joints[n - 1].pos;
-        let endpoint_dist = anchor_pos.distance(end_pos);
-        let endpoint_stretch = (endpoint_dist / self.max_length()).clamp(0.0, 1.0);
-
-        if endpoint_stretch > 0.92 {
-            let t = (endpoint_stretch - 0.92) / 0.08;
-            let stiffness = t * t;
+            // Suppress bend/straightening-induced velocity.  Under tension the
+            // chain should settle crisply, so all internal joints (including any
+            // newly pressed against a wall during this step) drop their velocity.
             for i in 1..n - 1 {
-                let ratio = i as f32 / (n - 1) as f32;
-                let straight_pos = anchor_pos.lerp(end_pos, ratio);
-                self.joints[i].pos = self.joints[i].pos.lerp(straight_pos, stiffness);
                 self.joints[i].old_pos = self.joints[i].pos;
             }
         }

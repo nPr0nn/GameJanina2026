@@ -7,6 +7,7 @@ use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
 use crate::chain::Chain;
+use crate::collision::{push_rect_out_of_aabb, resolve_swept};
 use crate::player::Player;
 
 // A custom fragment shader: an animated rainbow driven by world position and
@@ -63,6 +64,9 @@ pub struct Gameplay {
     level: Level,
     chains: Vec<Chain>,
     chain_anchor: Vec2D,
+    /// Static obstacles in world space. Chains and the player both collide
+    /// with these; chain joints wrap around them naturally.
+    obstacles: Vec<Rect>,
     test_movable: crate::movable::MovableBox,
 }
 
@@ -76,9 +80,15 @@ impl Gameplay {
         player.pos = Vec2D::new(640.0, 150.0);
         // Three chains sharing the same anchor but with different lengths and tints.
         let chains = vec![
-            Chain::new(chain_anchor, player.pos, 200.0, 6.0, RED),
-            Chain::new(chain_anchor, player.pos, 300.0, 6.0, LIME),
-            Chain::new(chain_anchor, player.pos, 400.0, 6.0, SKYBLUE),
+            Chain::new(chain_anchor, player.pos, 400.0, 6.0, RED),
+            Chain::new(chain_anchor, player.pos, 550.0, 6.0, LIME),
+            Chain::new(chain_anchor, player.pos, 700.0, 6.0, SKYBLUE),
+        ];
+        // Two solid blocks the player and chains can collide with.
+        // Placed within reach of all three chains (max 400 px from anchor).
+        let obstacles = vec![
+            Rect::new(450.0, 220.0, 90.0, 90.0),
+            Rect::new(720.0, 310.0, 110.0, 70.0),
         ];
 
         Self {
@@ -98,6 +108,7 @@ impl Gameplay {
             level: load_level(),
             chains,
             chain_anchor,
+            obstacles,
         }
     }
 
@@ -109,13 +120,17 @@ impl Gameplay {
         self.player = Player::new(self.cow.clone());
         self.player.pos = Vec2D::new(640.0, 150.0);
         self.chains = vec![
-            Chain::new(self.chain_anchor, self.player.pos, 200.0, 6.0, RED),
-            Chain::new(self.chain_anchor, self.player.pos, 300.0, 6.0, LIME),
-            Chain::new(self.chain_anchor, self.player.pos, 400.0, 6.0, SKYBLUE),
+            Chain::new(self.chain_anchor, self.player.pos, 400.0, 6.0, RED),
+            Chain::new(self.chain_anchor, self.player.pos, 550.0, 6.0, LIME),
+            Chain::new(self.chain_anchor, self.player.pos, 700.0, 6.0, SKYBLUE),
         ];
         self.test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         self.spin = 0.0;
         self.zoom = 1.0;
+        self.obstacles = vec![
+            Rect::new(450.0, 220.0, 90.0, 90.0),
+            Rect::new(720.0, 310.0, 110.0, 70.0),
+        ];
     }
 
     /// Advance the world one fixed step. Only called while actually playing, so
@@ -129,30 +144,74 @@ impl Gameplay {
             ctx.play_sound(&self.pop);
         }
 
-        // Player movement (constrained by the shortest chain so it cannot overextend).
+        // ── Player movement ──────────────────────────────────────────────────
+        //
+        // Use swept AABB so the player never tunnels into a block, and slides
+        // along wall surfaces naturally.
         let move_dir = self.player.input_direction(ctx);
-        let desired_delta = move_dir * self.player.speed * ctx.dt;
-        let next_pos = self.player.pos + desired_delta;
-        let min_length = self
-            .chains
-            .iter()
-            .map(|c| c.max_length())
-            .fold(f32::INFINITY, f32::min);
-        let dist = self.chain_anchor.distance(next_pos);
-        if dist > min_length {
-            let clamp_dir = (next_pos - self.chain_anchor)
-                .try_normalize()
-                .unwrap_or(Vec2D::X);
-            self.player.pos = self.chain_anchor + clamp_dir * min_length;
-        } else {
-            self.player.pos = next_pos;
-        }
+        let vel = move_dir * self.player.speed * ctx.dt;
+        self.player.pos =
+            resolve_swept(self.player.pos, self.player.shape, vel, &self.obstacles);
 
-        // Update every chain's anchors and run physics.
+        // ── Chain simulation ─────────────────────────────────────────────────
+        //
+        // Run physics with the player's tentative (post-movement, pre-chain-
+        // constraint) position.  Chain joints settle around obstacles via the
+        // fused push-out inside the constraint loop.
         for chain in &mut self.chains {
             chain.set_start(self.chain_anchor);
             chain.set_end(self.player.pos);
-            chain.update(ctx.dt);
+            chain.update(ctx.dt, &self.obstacles);
+        }
+
+        // ── Post-simulation player constraint ────────────────────────────────
+        //
+        // Straight-line distance from the anchor is wrong when the chain wraps
+        // around an obstacle: the chain uses up path length getting around the
+        // block, leaving less reach for the player.
+        //
+        // `player_tether()` returns the last obstacle-contact joint and the
+        // remaining free length from that joint to the player end.  When there
+        // are no contacts it returns (anchor, max_length) — identical to a plain
+        // straight-line check.  We iterate so multiple chain constraints
+        // converge when they pull in different directions.
+        //
+        // The corrected target is reached via `resolve_swept` (moving FROM the
+        // player's current position), so the constraint can never yank the
+        // player through a block — it slides along the surface instead, exactly
+        // like a real rope reeling a body around a corner.
+        for _ in 0..4 {
+            let mut target = self.player.pos;
+            for chain in &self.chains {
+                let (tether, free_len) = chain.player_tether();
+                let dist = tether.distance(target);
+                if dist > free_len {
+                    let dir = (target - tether).try_normalize().unwrap_or(-Vec2D::Y);
+                    target = tether + dir * free_len;
+                }
+            }
+            let delta = target - self.player.pos;
+            if delta.length_squared() < 1e-4 {
+                break; // converged
+            }
+            self.player.pos =
+                resolve_swept(self.player.pos, self.player.shape, delta, &self.obstacles);
+        }
+
+        // Final safety: should the player still overlap a block after the
+        // constraint solve (e.g. squeezed between a wall and the rope), push it
+        // out.  Swept movement makes this a no-op in practice.
+        for &rect in &self.obstacles {
+            if let Some((new_pos, _)) =
+                push_rect_out_of_aabb(self.player.pos, self.player.shape, rect)
+            {
+                self.player.pos = new_pos;
+            }
+        }
+
+        // Sync chain endpoints so the visual matches the final player position.
+        for chain in &mut self.chains {
+            chain.set_end(self.player.pos);
         }
 
         // Spin the rotating cow at 90 deg/sec.
@@ -243,6 +302,11 @@ impl Gameplay {
         canvas.line(center, cursor, 5.0, DARKBLUE);
 
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
+
+        // Draw obstacles.
+        for &rect in &self.obstacles {
+            canvas.rectangle_from_rect(rect, DARKGRAY);
+        }
 
         // Draw all chains and the shared anchor.
         for chain in &self.chains {
