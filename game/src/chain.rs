@@ -94,7 +94,7 @@ impl Chain {
             segment_length,
             link_size,
             damping: 0.05,
-            straightness: 0.5,
+            straightness: 0.7,
             constraint_iterations: 20,
             show_debug: true,
             color,
@@ -272,6 +272,67 @@ impl Chain {
             }
             // Suppress straightening-induced velocity.
             for i in 1..n - 1 {
+                self.joints[i].old_pos = self.joints[i].pos;
+            }
+
+            // ── 4b. Re-enforce constraints broken by straightening ─────────────
+            //
+            // Straightening can push a joint toward its neighbours' midpoint in a
+            // way that exceeds segment_length with one of its adjacent joints.
+            // A short constraint pass here resolves those violations within the
+            // same frame so they cannot feed back as wobble next frame.
+            for _ in 0..5 {
+                for i in (1..n - 1).rev() {
+                    let delta = self.joints[i].pos - self.joints[i + 1].pos;
+                    let dist_sq = delta.length_squared();
+                    if dist_sq > sl_sq {
+                        let dist = dist_sq.sqrt();
+                        self.joints[i].pos = self.joints[i + 1].pos + delta * (sl / dist);
+                        self.joints[i].old_pos = self.joints[i].pos;
+                    }
+                }
+                for i in 1..n - 1 {
+                    let delta = self.joints[i].pos - self.joints[i - 1].pos;
+                    let dist_sq = delta.length_squared();
+                    if dist_sq > sl_sq {
+                        let dist = dist_sq.sqrt();
+                        self.joints[i].pos = self.joints[i - 1].pos + delta * (sl / dist);
+                        self.joints[i].old_pos = self.joints[i].pos;
+                    }
+                }
+            }
+        }
+
+        // ── 5. Endpoint-stretch stiffness snap ────────────────────────────────
+        //
+        // When the straight-line distance between the two anchors is near the
+        // chain's maximum length, the chain physically cannot bend — every
+        // valid configuration is essentially a straight line.  We enforce this
+        // explicitly by lerping all internal joints toward the perfect straight
+        // line between the two anchor positions.
+        //
+        // The blend uses a quadratic ramp that activates from 85 % endpoint
+        // stretch to 100 %, so the transition from floppy to rigid feels
+        // natural rather than a sudden snap.
+        //
+        // This step does NOT violate the max-length constraint: the straight
+        // line between two points is the *shortest* path, so every segment on
+        // that line is shorter than or equal to segment_length.
+        //
+        // NOTE: when world collision is added, skip this for joints held
+        // against a wall so the snap cannot push them through geometry.
+        let anchor_pos = self.joints[0].pos;
+        let end_pos = self.joints[n - 1].pos;
+        let endpoint_dist = anchor_pos.distance(end_pos);
+        let endpoint_stretch = (endpoint_dist / self.max_length()).clamp(0.0, 1.0);
+
+        if endpoint_stretch > 0.85 {
+            let t = (endpoint_stretch - 0.85) / 0.15;
+            let stiffness = t * t;
+            for i in 1..n - 1 {
+                let ratio = i as f32 / (n - 1) as f32;
+                let straight_pos = anchor_pos.lerp(end_pos, ratio);
+                self.joints[i].pos = self.joints[i].pos.lerp(straight_pos, stiffness);
                 self.joints[i].old_pos = self.joints[i].pos;
             }
         }
