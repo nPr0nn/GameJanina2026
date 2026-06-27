@@ -1,68 +1,79 @@
 use juni::prelude::*;
 
-/// A single particle in the chain simulation.
 #[derive(Debug, Clone, Copy)]
 struct Joint {
     pos: Vec2D,
+    /// Previous position, used only for Verlet inertia on slack (un-tensioned) joints.
     old_pos: Vec2D,
 }
 
-/// A chain with two configurable anchor points, simulated as a series of rigid
-/// links (virtual squares).
+/// A chain simulated as a series of rigid links between two pinned endpoints.
 ///
-/// # Design
+/// # Physics model
 ///
-/// The game is **top-down**, so there is **no gravity**. Instead, the chain
-/// behaves like a heavy cable dragged across a flat surface:
+/// Designed for a **top-down game with no gravity**.  The chain behaves like a
+/// heavy cable dragged across a flat surface:
 ///
-/// * **Inertia / mass** — modelled with Verlet integration and strong velocity
-///   damping (friction).  When one anchor moves, the disturbance propagates
-///   slowly and dies out quickly.  This makes the chain feel heavy rather than
-///   weightless or bouncy.
-/// * **Continuous stretch** — [`stretch`](Self::stretch) measures how much of
-///   the chain's total length is currently "used up" by the joint positions.
-///   It is a value in `[0, 1]` that is independent of the anchor distance, so
-///   the chain can be fully stretched even when wrapped around obstacles.
-///   As stretch increases, a bend-resistance constraint smoothly straightens
-///   the chain, giving a realistic transition from floppy to stiff.
-/// * **Slack** — when the chain is not fully extended, it is free to bend.
-///   Segments may become shorter than their limit, but they are never allowed
-///   to stretch longer.
+/// * **Propagation from the player end** — constraint solving runs end→anchor
+///   first.  Tension only reaches a joint when the segment connecting it to its
+///   player-side neighbour is pulled taut.  When the chain is slack, only the
+///   links nearest the player end move; links farther toward the fixed anchor
+///   stay put.  As the chain becomes more extended, the tension propagates
+///   farther and a larger section moves together.
 ///
-/// # Collision
+/// * **Immediate settling** — after every constraint pass the velocity of any
+///   joint that was moved by a constraint is zeroed.  This prevents the
+///   correction from becoming a Verlet velocity next frame and producing the
+///   elastic "rubber-band" oscillation.  The chain stops in at most one or two
+///   frames when the player stops.
 ///
-/// Each link can be queried as an axis-aligned [`Rect`] via [`link_rects`](Self::link_rects).
-/// Collision against world objects is not yet implemented but the geometry is
-/// exposed for a future broad-phase.
+/// * **Slack inertia** — joints that were *not* tensioned this frame keep a
+///   small amount of residual velocity, controlled by [`damping`](Self::damping).
+///   At the default value they settle in well under a tenth of a second.
+///
+/// * **Bend resistance** — [`straightness`](Self::straightness) pulls each
+///   joint toward the midpoint of its neighbours, scaled by how stretched the
+///   chain currently is.  The chain transitions smoothly from floppy (slack) to
+///   cable-straight (taut).
+///
+/// # Collision readiness
+///
+/// Each link is exposed as an axis-aligned [`Rect`] via
+/// [`link_rects`](Self::link_rects) for future broad-phase collision detection.
 pub struct Chain {
     joints: Vec<Joint>,
     segment_length: f32,
-    /// Width / height of the virtual square used for each link.
+    /// Width / height of each virtual square link (visual and collision size).
     pub link_size: f32,
-    /// Velocity retention factor **per second**.  `0.90` means 10 % of the
-    /// kinetic energy is lost every second.  Lower values make the chain feel
-    /// heavier and more sluggish.  The factor is automatically adjusted for the
-    /// current fixed timestep so the damping rate is frame-rate independent.
+    /// Velocity retention **per second** for slack (un-tensioned) joints.
+    ///
+    /// `0.0` = stops immediately (pure position-based).
+    /// `0.5` = 50 % velocity kept after one second.
+    /// Constrained joints always have their velocity zeroed regardless of this
+    /// setting.
     pub damping: f32,
-    /// How aggressively the chain resists bending as it stretches.
-    /// `0.0` = never straightens (purely floppy), `1.0` = maximum straightening.
+    /// Bend resistance as the chain stretches (`0.0`–`1.0`).
+    ///
+    /// `0.0` = always floppy; `1.0` = fully cable-straight when taut.
     pub straightness: f32,
     constraint_iterations: usize,
-    /// If `true`, each joint is drawn as a small square in addition to the
-    /// connecting line.
+    /// Draw each joint as a square in addition to the connecting lines.
     pub show_debug: bool,
     color: Color,
+    /// Scratch buffer reused every frame to track which joints were moved by
+    /// a constraint (avoids a heap allocation per update).
+    was_constrained: Vec<bool>,
 }
 
 impl Chain {
     /// Create a new chain.
     ///
-    /// * `start` and `end` — initial anchor positions (used to distribute joints).
-    /// * `total_length` — maximum length of the chain.  Anchors cannot be
-    ///   separated farther than this.
-    /// * `link_size` — size of each virtual square link.  Smaller values give
-    ///   more segments and a smoother curve.
-    /// * `color` — tint used when drawing the chain.
+    /// Joints are distributed evenly between `start` and `end`.
+    ///
+    /// * `total_length` — maximum chain length; anchors cannot be farther apart.
+    /// * `link_size` — size of each virtual link; determines segment count and
+    ///   is also used as the visual line thickness.
+    /// * `color` — tint used when drawing.
     pub fn new(start: Vec2D, end: Vec2D, total_length: f32, link_size: f32, color: Color) -> Self {
         assert!(total_length > 0.0, "chain total_length must be positive");
         assert!(link_size > 0.0, "chain link_size must be positive");
@@ -77,25 +88,27 @@ impl Chain {
             joints.push(Joint { pos, old_pos: pos });
         }
 
+        let n = joints.len();
         Self {
             joints,
             segment_length,
             link_size,
-            damping: 0.90,
+            damping: 0.05,
             straightness: 0.5,
-            constraint_iterations: 10,
+            constraint_iterations: 20,
             show_debug: true,
             color,
+            was_constrained: vec![false; n],
         }
     }
 
-    /// Move the start anchor to `pos`.  Call before [`update`](Self::update).
+    /// Pin the fixed anchor to `pos`. Call before [`update`](Self::update).
     pub fn set_start(&mut self, pos: Vec2D) {
         self.joints[0].pos = pos;
         self.joints[0].old_pos = pos;
     }
 
-    /// Move the end anchor to `pos`.  Call before [`update`](Self::update).
+    /// Pin the player-end anchor to `pos`. Call before [`update`](Self::update).
     pub fn set_end(&mut self, pos: Vec2D) {
         let last = self.joints.len() - 1;
         self.joints[last].pos = pos;
@@ -104,28 +117,24 @@ impl Chain {
 
     /// Total maximum length of the chain.
     pub fn max_length(&self) -> f32 {
-        self.segment_length * (self.joints.len().saturating_sub(1)) as f32
+        self.segment_length * self.joints.len().saturating_sub(1) as f32
     }
 
-    /// Position of the start anchor.
+    /// Position of the fixed anchor (start).
     pub fn start(&self) -> Vec2D {
         self.joints[0].pos
     }
 
-    /// Position of the end anchor.
+    /// Position of the player-end anchor.
     #[allow(dead_code)]
     pub fn end(&self) -> Vec2D {
         self.joints[self.joints.len() - 1].pos
     }
 
-    /// A continuous measure of how extended the chain is, in `[0, 1]`.
+    /// Geometric stretch in `[0, 1]`: actual path length divided by max length.
     ///
-    /// Computed from the sum of actual segment lengths divided by the chain's
-    /// maximum length.  This is a **local geometric** property: it reflects the
-    /// real path the chain follows, not just the straight-line distance between
-    /// anchors.  Consequently a chain wrapped around an obstacle can read
-    /// `1.0` (fully stretched) even though the anchors are much closer than
-    /// [`max_length`](Self::max_length).
+    /// Reflects the real chain path, not just the straight-line anchor distance,
+    /// so a chain wrapped around an obstacle reads `1.0` when fully extended.
     pub fn stretch(&self) -> f32 {
         let actual: f32 = self
             .joints
@@ -135,78 +144,142 @@ impl Chain {
         (actual / self.max_length()).clamp(0.0, 1.0)
     }
 
-    /// Advance the physics simulation by `dt` seconds.
+    /// Advance the simulation by `dt` seconds.
     ///
-    /// The chain is integrated with heavy damping and distance constraints.
-    /// A continuous bend-resistance term (scaled by [`stretch`](Self::stretch))
-    /// smoothly transitions the chain from floppy to stiff as it extends.
+    /// Both anchors must be pinned via [`set_start`](Self::set_start) /
+    /// [`set_end`](Self::set_end) **before** calling this.
     pub fn update(&mut self, dt: f32) {
-        // Per-frame damping factor derived from the per-second rate so the
-        // heavy "mass" feel is independent of the fixed timestep.
-        let frame_damping = self.damping.powf(dt * 60.0);
-
-        // 1. Integrate internal joints.
-        for i in 1..self.joints.len() - 1 {
-            let joint = &self.joints[i];
-            let velocity = joint.pos - joint.old_pos;
-            let damped_velocity = velocity * frame_damping;
-            let temp = joint.pos;
-            self.joints[i].pos += damped_velocity;
-            self.joints[i].old_pos = temp;
+        let n = self.joints.len();
+        if n < 2 {
+            return;
         }
 
-        // 2. Iterative distance constraints (segments may not stretch).
-        for _ in 0..self.constraint_iterations {
-            for i in 0..self.joints.len() - 1 {
-                let a = self.joints[i].pos;
-                let b = self.joints[i + 1].pos;
-                let delta = b - a;
-                let dist = delta.length();
-
-                if dist > self.segment_length && dist > 0.0 {
-                    let diff = (dist - self.segment_length) / dist;
-                    let correction = delta * diff;
-
-                    let (weight_a, weight_b) = if i == 0 {
-                        (0.0, 1.0) // start anchor is immovable
-                    } else if i + 1 == self.joints.len() - 1 {
-                        (1.0, 0.0) // end anchor is immovable
-                    } else {
-                        (0.5, 0.5)
-                    };
-
-                    self.joints[i].pos += correction * weight_a;
-                    self.joints[i + 1].pos -= correction * weight_b;
-                }
+        // ── 1. Residual inertia for slack joints ──────────────────────────────
+        //
+        // A small Verlet step is applied to internal joints.  With the default
+        // damping = 0.05, the per-frame retention is ~0.95 (at 60 fps), so slack
+        // joints settle in well under a second.  Constrained joints will have
+        // their velocity zeroed in step 3, so inertia only manifests for links
+        // that are genuinely free (not under tension).
+        if self.damping > 0.0 {
+            let retention = self.damping.powf(dt);
+            for i in 1..n - 1 {
+                let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
+                self.joints[i].old_pos = self.joints[i].pos;
+                self.joints[i].pos += vel;
+            }
+        } else {
+            // Sync old_pos so old data never leaks if damping is later enabled.
+            for i in 1..n - 1 {
+                self.joints[i].old_pos = self.joints[i].pos;
             }
         }
 
-        // 3. Continuous straightening based on stretch.
+        // ── 2. Bidirectional distance constraints ─────────────────────────────
         //
-        // As the chain extends, it progressively resists bending.  The
-        // correction pulls each internal joint toward the midpoint of its
-        // neighbours; the strength is proportional to stretch, giving a
-        // smooth visual transition from floppy to stiff.
-        let stretch = self.stretch();
-        if stretch > 0.0 {
-            let strength = self.straightness * stretch;
-            for _ in 0..3 {
-                for i in 1..self.joints.len() - 1 {
-                    let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
-                    let correction = ideal - self.joints[i].pos;
-                    self.joints[i].pos += correction * strength;
+        // Segments may never *exceed* segment_length (max-length constraint).
+        // Segments may be shorter than segment_length (slack is fine).
+        //
+        // Pass A — player end → fixed anchor (primary pass).
+        //   Working from joint n-2 down to joint 1, each joint is pulled
+        //   toward its player-side neighbour if the segment is overstretched.
+        //   This is what produces "only the nearby links follow when slack":
+        //   if a link is within range of its player-side neighbour it is not
+        //   moved, and the tension stops propagating inward.
+        //
+        // Pass B — fixed anchor → player end (secondary pass).
+        //   Enforce consistency from the anchor side.  Both passes together
+        //   converge on a valid configuration after several iterations even
+        //   when the chain is fully taut between two fixed points.
+
+        let sl = self.segment_length;
+        let sl_sq = sl * sl;
+        self.was_constrained.iter_mut().for_each(|c| *c = false);
+
+        for _ in 0..self.constraint_iterations {
+            // Pass A: player end → anchor
+            for i in (1..n - 1).rev() {
+                // Joint i+1 is the player-side neighbour (higher index = closer to player).
+                let delta = self.joints[i].pos - self.joints[i + 1].pos;
+                let dist_sq = delta.length_squared();
+                if dist_sq > sl_sq {
+                    let dist = dist_sq.sqrt();
+                    // Move joint i toward joint i+1 until the segment is exactly sl.
+                    self.joints[i].pos = self.joints[i + 1].pos + delta * (sl / dist);
+                    self.was_constrained[i] = true;
                 }
+                // i == 0 is the fixed anchor — skipped by the range 1..n-1.
+            }
+
+            // Pass B: anchor → player end
+            for i in 1..n - 1 {
+                // Joint i-1 is the anchor-side neighbour (lower index = closer to anchor).
+                let delta = self.joints[i].pos - self.joints[i - 1].pos;
+                let dist_sq = delta.length_squared();
+                if dist_sq > sl_sq {
+                    let dist = dist_sq.sqrt();
+                    // Move joint i toward joint i-1 until the segment is exactly sl.
+                    self.joints[i].pos = self.joints[i - 1].pos + delta * (sl / dist);
+                    self.was_constrained[i] = true;
+                }
+                // i == n-1 is the player-end anchor — skipped by the range 1..n-1.
+            }
+        }
+
+        // ── 3. Kill elastic rebound ───────────────────────────────────────────
+        //
+        // Zero the velocity (old_pos = pos) of every joint that was moved by
+        // a constraint.  Without this, the constraint correction becomes a
+        // Verlet velocity next frame and the chain oscillates back — the
+        // "elastic cable" effect.  Joints that were *not* tensioned keep their
+        // (already-damped) residual velocity for a brief natural settle.
+        for i in 1..n - 1 {
+            if self.was_constrained[i] {
+                self.joints[i].old_pos = self.joints[i].pos;
+            }
+        }
+
+        // ── 4. Bend resistance ────────────────────────────────────────────────
+        //
+        // Pull each joint toward the midpoint of its neighbours to make the
+        // chain look like a taut cable as it extends.
+        //
+        // Guard: only run when at least one joint was constrained this frame
+        // (the chain is actively under tension).  Without this guard the chain
+        // would slowly straighten itself every frame even while the player is
+        // still — a heavy cable on a flat surface does not do that.
+        //
+        // Strength uses a quadratic ramp so the effect is negligible when
+        // slightly extended and full-force only near maximum stretch.
+        // Eight sub-iterations per frame ensures the chain converges to a
+        // cable-straight line within one or two frames when fully taut.
+        let under_tension = self.was_constrained[1..n - 1].iter().any(|&c| c);
+        let stretch = self.stretch();
+        if under_tension && self.straightness > 0.0 && stretch > 0.1 {
+            let strength = self.straightness * stretch * stretch;
+            for _ in 0..8 {
+                let mut max_delta_sq = 0.0f32;
+                for i in 1..n - 1 {
+                    let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
+                    let current = self.joints[i].pos;
+                    let correction = (ideal - current) * strength;
+                    self.joints[i].pos += correction;
+                    max_delta_sq = max_delta_sq.max(correction.length_squared());
+                }
+                if max_delta_sq < 0.01 {
+                    break; // converged – no need for more sub-iterations
+                }
+            }
+            // Suppress straightening-induced velocity.
+            for i in 1..n - 1 {
+                self.joints[i].old_pos = self.joints[i].pos;
             }
         }
     }
 
-    /// Draw the chain.
-    ///
-    /// A thick line is always drawn between consecutive joints.  When
-    /// [`show_debug`](Self::show_debug) is enabled each joint is also drawn as
-    /// a square.
+    /// Draw the chain: thick lines between consecutive joints, and (when
+    /// [`show_debug`](Self::show_debug) is enabled) a square at each joint.
     pub fn draw(&self, canvas: &mut Canvas) {
-        // Draw connecting lines.
         for i in 0..self.joints.len() - 1 {
             canvas.line(
                 self.joints[i].pos,
@@ -230,13 +303,11 @@ impl Chain {
         }
     }
 
-    /// Given a current position and a desired movement delta, return a clamped
-    /// delta that keeps the entity within [`max_length`](Self::max_length) of
-    /// the chain's fixed start point.
+    /// Clamp a desired movement delta so the entity stays within
+    /// [`max_length`](Self::max_length) of the fixed anchor.
     ///
-    /// The returned delta preserves the tangential component (allowing the
-    /// entity to slide along the circular boundary) while capping the radial
-    /// component so the chain can never be overextended.
+    /// The tangential component (sliding along the boundary arc) is preserved;
+    /// only the radial component that would overextend the chain is removed.
     pub fn constrain_movement(&self, current_pos: Vec2D, desired_delta: Vec2D) -> Vec2D {
         let fixed = self.start();
         let next_pos = current_pos + desired_delta;
@@ -247,7 +318,6 @@ impl Chain {
             return desired_delta;
         }
 
-        // Clamp next_pos to the circle of radius max_dist around fixed.
         let dir = (next_pos - fixed).try_normalize().unwrap_or(Vec2D::X);
         let clamped_pos = fixed + dir * max_dist;
         clamped_pos - current_pos
@@ -255,13 +325,13 @@ impl Chain {
 
     /// Iterator over the bounding rectangles of each virtual link.
     ///
-    /// These are axis-aligned squares centred on each joint.  In the future
-    /// they can be rotated to follow the segment orientation.
+    /// Axis-aligned squares centred on each joint.  Intended for future
+    /// broad-phase world collision detection.
     #[allow(dead_code)]
     pub fn link_rects(&self) -> impl Iterator<Item = Rect> + '_ {
         let half = self.link_size * 0.5;
-        self.joints
-            .iter()
-            .map(move |j| Rect::new(j.pos.x - half, j.pos.y - half, self.link_size, self.link_size))
+        self.joints.iter().map(move |j| {
+            Rect::new(j.pos.x - half, j.pos.y - half, self.link_size, self.link_size)
+        })
     }
 }
