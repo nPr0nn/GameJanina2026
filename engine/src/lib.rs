@@ -30,6 +30,7 @@ mod canvas;
 mod color;
 mod graphics;
 mod input;
+pub mod level;
 mod math;
 mod renderer;
 mod text;
@@ -40,6 +41,7 @@ pub use camera::Camera2D;
 pub use canvas::Canvas;
 pub use color::*;
 pub use input::{Key, MouseButton};
+pub use level::{Level, Shape};
 pub use math::{Rect, Vec2D};
 pub use renderer::{Shader, Texture};
 
@@ -48,8 +50,8 @@ pub use renderer::{Shader, Texture};
 pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
-        run, Camera2D, Canvas, Config, Context, Game, Key, MouseButton, Rect, Shader, Sound,
-        Texture, Vec2D,
+        run, Camera2D, Canvas, Config, Context, Game, Key, Level, MouseButton, Rect, Shader, Shape,
+        Sound, Texture, Vec2D,
     };
 }
 

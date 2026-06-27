@@ -1,0 +1,13 @@
+[package]
+name = "editor"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "editor"
+path = "src/main.rs"
+
+[dependencies]
+# The same engine the game uses. The editor is a native desktop tool that
+# writes the level file `juni::level` defines and the game loads.
+juni = { path = "../engine" }

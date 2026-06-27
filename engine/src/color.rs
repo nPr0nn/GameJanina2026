@@ -1,10 +1,11 @@
 //! Color type and a predefined palette.
 
 use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
 
 /// An RGBA color stored as 8 bits per channel
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,

@@ -3,6 +3,7 @@
 //! state — global keys (pause, fullscreen, win/lose) are handled by the screen
 //! manager in `main.rs`.
 
+use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
 // A custom fragment shader: an animated rainbow driven by world position and
@@ -54,6 +55,9 @@ pub struct Gameplay {
     spin: f32,
     zoom: f32,
     fps: u32,
+    /// The level authored in the `editor` crate. Drawn as a static backdrop in
+    /// the same virtual-canvas coordinates the editor used.
+    level: Level,
 }
 
 impl Gameplay {
@@ -71,6 +75,7 @@ impl Gameplay {
             spin: 0.0,
             zoom: 1.0,
             fps: 0,
+            level: load_level(),
         }
     }
 
@@ -188,6 +193,10 @@ impl Gameplay {
 
         canvas.end_mode_2d();
 
+        // The level authored in the editor, drawn in screen space (matching the
+        // editor's coordinates) on top of the demo scene.
+        self.level.draw(canvas);
+
         // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
         canvas.text(
@@ -197,5 +206,19 @@ impl Gameplay {
             24.0,
             WHITE,
         );
+    }
+}
+
+/// Load the editor's level from disk on native; on the web there is no
+/// synchronous filesystem, so start empty (assets would be embedded instead).
+fn load_level() -> Level {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Level::load(DEFAULT_LEVEL_PATH).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = DEFAULT_LEVEL_PATH;
+        Level::default()
     }
 }
