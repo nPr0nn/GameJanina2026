@@ -47,6 +47,7 @@ struct Demo {
     dir: f32,
     player: Vec2D,
     mouse: Vec2D,
+    block: Rect,
     rainbow: Shader,
     cow: Texture,
     pop: Sound,
@@ -60,6 +61,9 @@ impl Game for Demo {
             x: 100.0, dir: 1.0,
             player: Vec2D{ x: 0.0, y: 0.0 },
             mouse: Vec2D::ZERO,
+
+            // A solid obstacle in the world. The player cannot walk through it.
+            block: Rect::new(400.0, 400.0, 200.0, 60.0),
 
             // Compile the custom shader once, up front (raylib's LoadShader).
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
@@ -94,19 +98,23 @@ impl Game for Demo {
             ctx.exit();
         }
 
-        // Player Movement
+        // Player Movement with collision against the hard block.
+        let mut velocity = Vec2D::ZERO;
         if ctx.is_key_down(Key::W) {
-            self.player.y -= 5.0;
+            velocity.y -= 5.0;
         }
         if ctx.is_key_down(Key::A) {
-            self.player.x -= 5.0;
+            velocity.x -= 5.0;
         }
         if ctx.is_key_down(Key::S) {
-            self.player.y += 5.0;
+            velocity.y += 5.0;
         }
         if ctx.is_key_down(Key::D) {
-            self.player.x += 5.0;
+            velocity.x += 5.0;
         }
+        let player_rect = Rect::new(self.player.x, self.player.y, 100.0, 100.0);
+        let resolved = move_rect(player_rect, velocity, &[self.block]);
+        self.player = Vec2D::new(resolved.x, resolved.y);
 
         // Spin the rotating cow at 90 deg/sec.
         self.spin += 90.0 * ctx.dt;
@@ -141,6 +149,9 @@ impl Game for Demo {
 
         // Static rectangle.
         canvas.rectangle(60.0, 60.0, 300.0, 180.0, SKYBLUE);
+
+        // Hard block: the player cannot pass through this.
+        canvas.rectangle_from_rect(self.block, DARKGRAY);
 
         // Rectangle from a Rectangle struct.
         canvas.rectangle_from_rect(Rect::new(60.0, 300.0, 300.0, 180.0), GOLD);

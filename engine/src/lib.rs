@@ -27,6 +27,7 @@ mod app;
 mod audio;
 mod camera;
 mod canvas;
+mod collision;
 mod color;
 mod graphics;
 mod input;
@@ -37,6 +38,7 @@ mod time;
 pub use audio::Sound;
 pub use camera::Camera2D;
 pub use canvas::Canvas;
+pub use collision::*;
 pub use color::*;
 pub use input::{Key, MouseButton};
 pub use math::{Rect, Vec2D};
@@ -47,8 +49,8 @@ pub use renderer::{Shader, Texture};
 pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
-        run, Camera2D, Canvas, Config, Context, Game, Key, MouseButton, Rect, Shader, Sound,
-        Texture, Vec2D,
+        circle_circle, move_rect, rect_circle, rect_point, rect_rect, run, Camera2D, Canvas,
+        Config, Context, Game, Key, MouseButton, Rect, Shader, Sound, Texture, Vec2D,
     };
 }
 
