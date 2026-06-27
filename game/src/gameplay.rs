@@ -60,20 +60,23 @@ pub struct Gameplay {
     /// The level authored in the `editor` crate, in world coordinates. Drawn
     /// through the game camera, the same way the editor authored it.
     level: Level,
+    test_movable: crate::movable::MovableBox, // Kill when conflict
 }
 
 impl Gameplay {
     pub fn new(ctx: &mut Context) -> Self {
         let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
+        let test_movable = crate::movable::MovableBox::new(Vec2D::new(200.0, 400.0), Vec2D::new(50.0, 50.0)); // Kill when conflict
         Self {
             x: 100.0,
             dir: 1.0,
             mouse: Vec2D::ZERO,
+            test_movable, // kill when conflict
             // Compile the custom shader once, up front (raylib's LoadShader).
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
             // Embed + decode the texture and sound once.
             cow: cow_texture.clone(),
-            player: Player::new(cow_texture.clone()),
+            player: Player::new(cow_texture),
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
@@ -121,6 +124,22 @@ impl Gameplay {
             self.x = 100.0;
             self.dir = 1.0;
         }
+
+        self.test_movable.update(ctx); // Kill when conflict
+
+        // Testa se o player colidiu com o movable box, se colidiu, diminui a vel do player e empurra a caixa para a direcao de velocidade do player
+        let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
+        let box_rect = Rect::new(self.test_movable.pos.x, self.test_movable.pos.y, self.test_movable.shape.x, self.test_movable.shape.y);
+        if player_rect.intersects(&box_rect) {
+            self.player.player_speed = 200.0; // Diminui a velocidade do player
+            let player_velocity = self.player.velocity;
+            let player_direction = (self.player.pos - self.test_movable.pos).normalize();
+            let impulse = player_direction * player_velocity;
+            self.test_movable.empurrar(impulse);
+        } else {
+            self.player.player_speed = 500.0; // Restaura a velocidade do player
+        }
+
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
@@ -182,13 +201,15 @@ impl Gameplay {
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
         self.player.draw(canvas);
 
+        
         // The level authored in the editor. Its shapes are in world
         // coordinates, so it's drawn inside the camera — pan/zoom move it with
         // the rest of the scene, matching what the editor showed.
         self.level.draw(canvas);
-
+        
+        self.test_movable.draw(canvas); // Kill when conflict
         canvas.end_mode_2d();
-
+        
         // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
         canvas.text(
