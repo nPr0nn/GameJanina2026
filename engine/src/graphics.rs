@@ -20,9 +20,9 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
     // compile both backends (see Cargo.toml); wgpu would otherwise prefer
     // WebGPU, so we narrow the instance to GL here.
     #[cfg(target_arch = "wasm32")]
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::GL,
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     #[cfg(not(target_arch = "wasm32"))]
     let instance = wgpu::Instance::default();

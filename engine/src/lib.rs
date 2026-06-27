@@ -32,6 +32,7 @@ mod graphics;
 mod input;
 mod math;
 mod renderer;
+mod text;
 mod time;
 
 pub use audio::Sound;
@@ -161,6 +162,14 @@ impl Context<'_> {
     pub fn load_texture(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<Texture> {
         let bytes = std::fs::read(path)?;
         Ok(self.renderer.build_texture(self.gfx, &bytes))
+    }
+
+    /// Measure the rendered size of `text` at `font_size` (in virtual pixels),
+    /// using the engine's default font. Raylib's `MeasureTextEx`: the `x` of the
+    /// result is the width of the widest line, `y` the total height. For just the
+    /// width (raylib's `MeasureText`) take `.x`.
+    pub fn measure_text(&self, text: &str, font_size: f32) -> Vec2D {
+        self.renderer.measure_text(text, font_size)
     }
 
     /// Decode WAV `bytes` into a [`Sound`] (raylib's `LoadSound`, over in-memory

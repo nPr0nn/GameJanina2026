@@ -52,7 +52,14 @@ struct Demo {
     pop: Sound,
     spin: f32,
     zoom: f32,
+    // HUD state: sampled FPS and the measured width of the title label (so we
+    // can size a backing panel behind it — demonstrates measure_text).
+    fps: u32,
+    label_width: f32,
 }
+
+const LABEL: &str = "juni — text via glyphon";
+const LABEL_SIZE: f32 = 40.0;
 
 impl Game for Demo {
     fn init(ctx: &mut Context) -> Self {
@@ -74,6 +81,8 @@ impl Game for Demo {
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
+            fps: 0,
+            label_width: ctx.measure_text(LABEL, LABEL_SIZE).x,
         }
 
    }
@@ -81,6 +90,7 @@ impl Game for Demo {
     fn update(&mut self, ctx: &mut Context) {
         // Track the cursor in virtual-canvas coordinates.
         self.mouse = ctx.mouse_position();
+        self.fps = ctx.fps;
 
         // Play a pop on each right-click.
         if ctx.is_mouse_button_pressed(MouseButton::Left) {
@@ -208,13 +218,29 @@ impl Game for Demo {
         canvas.draw_texture_ex(&self.cow, self.player, 0.0, 6.0, WHITE);
 
         canvas.end_mode_2d();
+
+        // --- HUD text (screen space, drawn after end_mode_2d) ---
+        // A title label with a translucent backing panel sized via the width we
+        // measured in init() with ctx.measure_text.
+        canvas.rectangle(20.0, 20.0, self.label_width + 30.0, LABEL_SIZE + 20.0, DARKBLUE);
+        canvas.text(LABEL, 35.0, 30.0, LABEL_SIZE, WHITE);
+
+        // Live FPS readout, and a hint line.
+        canvas.text(&format!("FPS: {}", self.fps), 35.0, 90.0, 28.0, LIME);
+        canvas.text(
+            "Pào, WASD move · wheel zoom · F fullscreen · Esc quit",
+            35.0,
+            680.0,
+            24.0,
+            WHITE,
+        );
     }
 }
 
 fn main() {
     run::<Demo>(Config {
-        width: 1280 / 2,
-        height: 720 / 2,
+        width: 1280,
+        height: 720,
         render_width: 1280,
         render_height: 720,
         title: "juni — shapes".to_string(),

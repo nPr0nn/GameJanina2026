@@ -10,8 +10,10 @@ use crate::camera::Camera2D;
 use crate::color::{Color, BLACK};
 use crate::graphics::{Graphics, Rc};
 use crate::math::Vec2D;
+use crate::text::{TextDraw, TextEngine};
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
+use std::cell::RefCell;
 use std::ops::Range;
 use wgpu::util::DeviceExt;
 
@@ -134,6 +136,13 @@ pub struct Batch {
     /// Active 2D camera (between `begin/end_mode_2d`). Applied to every vertex
     /// position on push, so it transforms shapes and textures uniformly.
     camera: Option<Camera2D>,
+    /// Strings queued for this frame. Drawn in a separate pass (on top of the
+    /// shape/texture geometry) at flush time; see `text.rs`.
+    texts: Vec<TextDraw>,
+    /// Optional fullscreen overlay color, composited on top of *everything*
+    /// (shapes, textures, and text) at the very end of the frame. Drives the
+    /// fade-in/out screen transitions. `None` = no overlay.
+    overlay: Option<Color>,
 }
 
 impl Batch {
@@ -170,6 +179,30 @@ impl Batch {
     /// Set the active 2D camera (`None` to clear). Used by `begin/end_mode_2d`.
     pub(crate) fn set_camera(&mut self, camera: Option<Camera2D>) {
         self.camera = camera;
+    }
+
+    /// Queue a string for this frame. The active camera (if any) is baked in now:
+    /// the position is mapped to screen space and the camera's zoom becomes a
+    /// uniform `scale` (rotation is not applied to text in this version).
+    pub(crate) fn push_text(&mut self, text: &str, x: f32, y: f32, font_size: f32, color: Color) {
+        let (pos, scale) = match &self.camera {
+            Some(cam) => (cam.world_to_screen(Vec2D::new(x, y)), cam.zoom),
+            None => (Vec2D::new(x, y), 1.0),
+        };
+        self.texts.push(TextDraw {
+            text: text.to_string(),
+            x: pos.x,
+            y: pos.y,
+            font_size,
+            scale,
+            color,
+        });
+    }
+
+    /// Set the fullscreen overlay color for this frame (composited last, over
+    /// text too). Used by `Canvas::fade`.
+    pub(crate) fn set_overlay(&mut self, color: Color) {
+        self.overlay = Some(color);
     }
 
     /// Emit a textured quad as its own draw command. `corners` and `uvs` are in
@@ -230,6 +263,8 @@ impl Batch {
         self.run_start = 0;
         self.run_pipeline = Pipeline::Shape;
         self.camera = None;
+        self.texts.clear();
+        self.overlay = None;
     }
 }
 
@@ -265,6 +300,16 @@ pub struct Renderer {
     // Letterbox pass.
     letterbox_pipeline: wgpu::RenderPipeline,
     letterbox_bind_group: wgpu::BindGroup,
+
+    // Text pass. `RefCell` so `Context::measure_text` can shape through a shared
+    // `&Renderer` while `flush` still mutates it directly.
+    text: RefCell<TextEngine>,
+
+    // Fullscreen fade overlay, composited after text. Single-sample (it shares
+    // the post pass with text, which targets the resolved texture), so it needs
+    // its own pipeline rather than reusing the (MSAA) shape pipeline.
+    overlay_pipeline: wgpu::RenderPipeline,
+    overlay_buffer: wgpu::Buffer,
 
     pub batch: Batch,
 }
@@ -456,8 +501,8 @@ impl Renderer {
         let letterbox_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("juni letterbox pipeline layout"),
-                bind_group_layouts: &[&letterbox_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&letterbox_layout)],
+                immediate_size: 0,
             });
         let letterbox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("juni letterbox pipeline"),
@@ -477,8 +522,26 @@ impl Renderer {
             primitive: Default::default(),
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
+        });
+
+        let text = RefCell::new(TextEngine::new(
+            gfx,
+            render_format,
+            render_width,
+            render_height,
+        ));
+
+        // Overlay: a single-sample shape pipeline plus a 6-vertex buffer holding
+        // the fullscreen quad (rewritten with the fade color each frame).
+        let overlay_pipeline =
+            create_shape_pipeline(device, &globals_layout, &shape_shader, render_format, 1);
+        let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("juni overlay buffer"),
+            size: 6 * std::mem::size_of::<Vertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         Self {
@@ -499,6 +562,9 @@ impl Renderer {
             sample_count,
             letterbox_pipeline,
             letterbox_bind_group,
+            text,
+            overlay_pipeline,
+            overlay_buffer,
             batch: Batch {
                 vertices: Vec::new(),
                 clear_color: BLACK,
@@ -506,8 +572,16 @@ impl Renderer {
                 run_start: 0,
                 run_pipeline: Pipeline::Shape,
                 camera: None,
+                texts: Vec::new(),
+                overlay: None,
             },
         }
+    }
+
+    /// Measure `text` at `font_size` in virtual pixels (raylib's `MeasureTextEx`).
+    /// Shapes through the shared text engine via interior mutability.
+    pub fn measure_text(&self, text: &str, font_size: f32) -> Vec2D {
+        self.text.borrow_mut().measure(text, font_size)
     }
 
     /// Compile a custom [`Shader`] from WGSL source. The module must expose
@@ -614,9 +688,10 @@ impl Renderer {
     /// custom shaders via `Globals.time`.
     pub fn flush(&mut self, gfx: &Graphics, time: f32) {
         let frame = match gfx.surface.get_current_texture() {
-            Ok(frame) => frame,
-            // Surface lost/outdated (e.g. mid-resize) — skip this frame.
-            Err(_) => return,
+            wgpu::CurrentSurfaceTexture::Success(f)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            // Surface lost/outdated/occluded (e.g. mid-resize) — skip this frame.
+            _ => return,
         };
         let surface_view = frame
             .texture
@@ -658,6 +733,7 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             if !self.batch.commands.is_empty() {
                 pass.set_bind_group(0, &self.globals_bind_group, &[]);
@@ -677,6 +753,30 @@ impl Renderer {
                     pass.draw(cmd.range.clone(), 0..1);
                 }
             }
+        }
+
+        // Pass 1.5: text, drawn on top of the scene. It targets the single-sample
+        // resolved texture with a *load* op, so it composites over the shapes
+        // regardless of MSAA. Skipped entirely when no text was queued.
+        if !self.batch.texts.is_empty() {
+            self.text.borrow_mut().prepare(gfx, &self.batch.texts);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("juni text pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.sampled_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            self.text.borrow_mut().render(&mut pass);
         }
 
         // Pass 2: render texture -> swapchain (letterboxed).
@@ -703,6 +803,7 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             if vw > 0.0 && vh > 0.0 {
                 pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
@@ -767,8 +868,8 @@ fn create_shape_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("juni shape pipeline layout"),
-        bind_group_layouts: &[globals_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(globals_layout)],
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("juni shape pipeline"),
@@ -796,7 +897,7 @@ fn create_shape_pipeline(
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -814,8 +915,8 @@ fn create_textured_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("juni texture pipeline layout"),
-        bind_group_layouts: &[globals_layout, texture_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(globals_layout), Some(texture_layout)],
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("juni texture pipeline"),
@@ -843,7 +944,7 @@ fn create_textured_pipeline(
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }

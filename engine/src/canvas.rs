@@ -208,4 +208,23 @@ impl<'a> Canvas<'a> {
         self.batch
             .push_textured_quad(corners, uvs, tint, texture.bind_group.clone());
     }
+
+    /// Draw `text` with its top-left at `(x, y)` at the given `font_size` (in
+    /// virtual pixels), using the engine's embedded default font. Raylib's
+    /// `DrawText`. Embedded `\n`s start new lines.
+    ///
+    /// Text is composited on top of all shapes/textures drawn this frame,
+    /// regardless of call order. The active 2D camera's pan/zoom apply (rotation
+    /// does not).
+    pub fn text(&mut self, text: &str, x: f32, y: f32, font_size: f32, color: Color) {
+        self.batch.push_text(text, x, y, font_size, color);
+    }
+
+    /// Like [`text`](Self::text) but taking a [`Vec2D`] position. Raylib's
+    /// `DrawTextEx` (without per-glyph spacing; the default font's metrics are
+    /// used directly).
+    pub fn text_v(&mut self, text: &str, position: Vec2D, font_size: f32, color: Color) {
+        self.batch
+            .push_text(text, position.x, position.y, font_size, color);
+    }
 }

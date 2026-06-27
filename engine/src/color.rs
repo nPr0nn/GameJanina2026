@@ -17,6 +17,16 @@ impl Color {
         Self { r, g, b, a }
     }
 
+    /// Return this color with its alpha scaled by `alpha` (clamped to `0..=1`).
+    /// Raylib's `Fade`: `WHITE.with_alpha(0.5)` is 50%-transparent white. Handy
+    /// for fade overlays and translucent panels.
+    pub fn with_alpha(self, alpha: f32) -> Self {
+        Self {
+            a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+            ..self
+        }
+    }
+
     /// Convert to linear-space `[f32; 4]` suitable for an sRGB swapchain/texture.
     ///
     /// The vertex colors are interpreted as sRGB (the convention everyone draws
