@@ -103,6 +103,19 @@ impl Shape {
     }
 }
 
+/// A placed sprite image in the level, stored as a path + transform so it can
+/// be serialized. The editor resolves the path to a GPU texture at runtime.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SpriteInstance {
+    /// Path to the PNG, relative to the workspace root (e.g. `"sprites/player.png"`).
+    pub path: String,
+    /// Top-left position in world-space pixels.
+    pub x: f32,
+    pub y: f32,
+    /// Uniform scale factor (1.0 = native pixel size).
+    pub scale: f32,
+}
+
 /// An ordered collection of planning layers. Later shapes within each layer
 /// draw on top of earlier ones.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -111,6 +124,9 @@ pub struct Level {
     pub sprite_shapes: Vec<Shape>,
     #[serde(default)]
     pub collision_shapes: Vec<Shape>,
+    /// Sprite images placed in the sprite-planning layer.
+    #[serde(default)]
+    pub sprite_instances: Vec<SpriteInstance>,
 }
 
 impl Level {

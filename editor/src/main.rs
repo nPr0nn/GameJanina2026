@@ -11,6 +11,7 @@
 // exact file the game loads.
 
 use juni::prelude::*;
+use std::collections::HashMap;
 use std::{
     io::{self, Write},
     path::Path,
@@ -72,9 +73,43 @@ struct Editor {
     show_help: bool,
     /// Whether the current in-memory level differs from the last saved/reloaded state.
     is_dirty: bool,
+    // --- Sprite support ---
+    /// PNG paths found in sprites/ at startup, sorted alphabetically.
+    available_sprites: Vec<String>,
+    /// Index into `available_sprites` for the sprite currently selected in the picker.
+    selected_sprite: Option<usize>,
+    /// Uniform scale applied to the next placed sprite.
+    sprite_scale: f32,
+    /// GPU textures keyed by path, loaded lazily on selection / placement.
+    sprite_cache: HashMap<String, Texture>,
 }
 
 impl Editor {
+    fn selected_sprite_name(&self) -> &str {
+        self.selected_sprite
+            .and_then(|i| self.available_sprites.get(i))
+            .map(|p| {
+                Path::new(p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(p.as_str())
+            })
+            .unwrap_or("none")
+    }
+
+    /// Find the topmost sprite instance under `p` in world space.
+    fn sprite_at(&self, p: Vec2D) -> Option<usize> {
+        self.level.sprite_instances.iter().rposition(|s| {
+            if let Some(tex) = self.sprite_cache.get(&s.path) {
+                let w = tex.width() as f32 * s.scale;
+                let h = tex.height() as f32 * s.scale;
+                p.x >= s.x && p.x <= s.x + w && p.y >= s.y && p.y <= s.y + h
+            } else {
+                false
+            }
+        })
+    }
+
     fn active_layer_name(&self) -> &'static str {
         match self.active_layer {
             Layer::SpritePlanning => "Sprite",
@@ -259,6 +294,25 @@ fn prompt_level_path() -> io::Result<String> {
     }
 }
 
+/// Scan `dir` for PNG files and return their paths sorted alphabetically.
+/// Returns an empty Vec if the directory does not exist.
+fn scan_sprites(dir: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<String> = entries
+        .flatten()
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("png"))
+        })
+        .map(|e| e.path().to_string_lossy().replace('\\', "/"))
+        .collect();
+    paths.sort();
+    paths
+}
+
 fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
     if Path::new(path).exists() {
         let level = Level::load(path)?;
@@ -293,6 +347,31 @@ impl Game for Editor {
             .get()
             .expect("editor startup config should be set before run()");
 
+        let available_sprites = scan_sprites("sprites");
+        let selected_sprite = if available_sprites.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+
+        // Pre-load textures for sprites already referenced in the level.
+        let mut sprite_cache = HashMap::new();
+        for inst in &startup.level.sprite_instances {
+            if !sprite_cache.contains_key(&inst.path) {
+                if let Ok(tex) = ctx.load_texture(&inst.path) {
+                    sprite_cache.insert(inst.path.clone(), tex);
+                }
+            }
+        }
+        // Also eagerly load the first available sprite for the picker preview.
+        if let Some(path) = selected_sprite.and_then(|i| available_sprites.get(i)) {
+            if !sprite_cache.contains_key(path) {
+                if let Ok(tex) = ctx.load_texture(path) {
+                    sprite_cache.insert(path.clone(), tex);
+                }
+            }
+        }
+
         let editor = Self {
             current_path: startup.path.clone(),
             level: startup.level.clone(),
@@ -307,6 +386,10 @@ impl Game for Editor {
             status: startup.status.clone(),
             show_help: false,
             is_dirty: false,
+            available_sprites,
+            selected_sprite,
+            sprite_scale: 1.0,
+            sprite_cache,
         };
         editor.refresh_window_title(ctx);
         editor
@@ -332,6 +415,7 @@ impl Game for Editor {
                 Layer::CollisionPlanning => Layer::SpritePlanning,
             };
             self.color = Self::default_layer_color(self.active_layer);
+            self.drag_start = None; // cancel any in-progress shape drag
             self.refresh_window_title(ctx);
             self.status = format!("Active layer: {}", self.active_layer_name());
         }
@@ -367,65 +451,149 @@ impl Game for Editor {
         let world = self.mouse_world();
         let snapped_world = self.snap_world(world);
 
-        // Tool selection.
-        if ctx.is_key_pressed(Key::R) {
-            self.tool = Tool::Rect;
-        }
-        if ctx.is_key_pressed(Key::C) {
-            self.tool = Tool::Circle;
-        }
+        let placing_sprite =
+            self.active_layer == Layer::SpritePlanning && self.selected_sprite.is_some();
 
-        // Color selection (number keys 1–6).
-        for (i, key) in [
-            Key::Num1,
-            Key::Num2,
-            Key::Num3,
-            Key::Num4,
-            Key::Num5,
-            Key::Num6,
-        ]
-        .iter()
-        .enumerate()
-        {
-            if ctx.is_key_pressed(*key) {
-                self.color = PALETTE[i];
+        // Tool / color selection only applies when drawing shapes.
+        if !placing_sprite {
+            if ctx.is_key_pressed(Key::R) {
+                self.tool = Tool::Rect;
             }
-        }
-
-        // Left button: drag to place a shape (in world space).
-        if ctx.is_mouse_button_pressed(MouseButton::Left) {
-            self.drag_start = Some(snapped_world);
-        }
-        if ctx.is_mouse_button_released(MouseButton::Left) {
-            if let Some(start) = self.drag_start.take() {
-                if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
-                    let active_shapes = self.active_shapes_mut();
-                    active_shapes.push(shape);
-                    let count = active_shapes.len();
-                    self.is_dirty = true;
-                    self.refresh_window_title(ctx);
-                    self.status = format!(
-                        "Placed shape on {} ({} total)",
-                        self.active_layer_name(),
-                        count
-                    );
+            if ctx.is_key_pressed(Key::C) {
+                self.tool = Tool::Circle;
+            }
+            for (i, key) in [
+                Key::Num1,
+                Key::Num2,
+                Key::Num3,
+                Key::Num4,
+                Key::Num5,
+                Key::Num6,
+            ]
+            .iter()
+            .enumerate()
+            {
+                if ctx.is_key_pressed(*key) {
+                    self.color = PALETTE[i];
                 }
             }
         }
 
-        // Right click: delete the topmost shape under the cursor.
+        // Sprite picker controls (sprite layer only).
+        if self.active_layer == Layer::SpritePlanning && !self.available_sprites.is_empty() {
+            let n = self.available_sprites.len();
+            let cur = self.selected_sprite.unwrap_or(0);
+
+            if ctx.is_key_pressed(Key::BracketLeft) {
+                let next = if cur == 0 { n - 1 } else { cur - 1 };
+                self.selected_sprite = Some(next);
+                let path = self.available_sprites[next].clone();
+                if !self.sprite_cache.contains_key(&path) {
+                    if let Ok(tex) = ctx.load_texture(&path) {
+                        self.sprite_cache.insert(path.clone(), tex);
+                    }
+                }
+                self.status = format!("Sprite: {}", self.selected_sprite_name());
+            }
+            if ctx.is_key_pressed(Key::BracketRight) {
+                let next = (cur + 1) % n;
+                self.selected_sprite = Some(next);
+                let path = self.available_sprites[next].clone();
+                if !self.sprite_cache.contains_key(&path) {
+                    if let Ok(tex) = ctx.load_texture(&path) {
+                        self.sprite_cache.insert(path.clone(), tex);
+                    }
+                }
+                self.status = format!("Sprite: {}", self.selected_sprite_name());
+            }
+            if ctx.is_key_pressed(Key::Comma) {
+                self.sprite_scale = (self.sprite_scale / 2.0).max(0.25);
+                self.status = format!("Scale: {:.2}x", self.sprite_scale);
+            }
+            if ctx.is_key_pressed(Key::Period) {
+                self.sprite_scale = (self.sprite_scale * 2.0).min(8.0);
+                self.status = format!("Scale: {:.2}x", self.sprite_scale);
+            }
+        }
+
+        // Left button.
+        if placing_sprite {
+            // Click to place the selected sprite at the snapped cursor.
+            if ctx.is_mouse_button_pressed(MouseButton::Left) {
+                if let Some(idx) = self.selected_sprite {
+                    let path = self.available_sprites[idx].clone();
+                    if !self.sprite_cache.contains_key(&path) {
+                        match ctx.load_texture(&path) {
+                            Ok(tex) => {
+                                self.sprite_cache.insert(path.clone(), tex);
+                            }
+                            Err(e) => {
+                                self.status = format!("Failed to load sprite: {e}");
+                                return;
+                            }
+                        }
+                    }
+                    self.level.sprite_instances.push(SpriteInstance {
+                        path,
+                        x: snapped_world.x,
+                        y: snapped_world.y,
+                        scale: self.sprite_scale,
+                    });
+                    let count = self.level.sprite_instances.len();
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Placed sprite ({count} total)");
+                }
+            }
+        } else {
+            // Drag to define a shape's size.
+            if ctx.is_mouse_button_pressed(MouseButton::Left) {
+                self.drag_start = Some(snapped_world);
+            }
+            if ctx.is_mouse_button_released(MouseButton::Left) {
+                if let Some(start) = self.drag_start.take() {
+                    if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
+                        let active_shapes = self.active_shapes_mut();
+                        active_shapes.push(shape);
+                        let count = active_shapes.len();
+                        self.is_dirty = true;
+                        self.refresh_window_title(ctx);
+                        self.status = format!(
+                            "Placed shape on {} ({} total)",
+                            self.active_layer_name(),
+                            count
+                        );
+                    }
+                }
+            }
+        }
+
+        // Right click: delete topmost sprite (sprite layer only) or shape.
         if ctx.is_mouse_button_pressed(MouseButton::Right) {
-            let active_shapes = self.active_shapes_mut();
-            if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
-                active_shapes.remove(i);
-                let count = active_shapes.len();
-                self.is_dirty = true;
-                self.refresh_window_title(ctx);
-                self.status = format!(
-                    "Deleted shape from {} ({} left)",
-                    self.active_layer_name(),
-                    count
-                );
+            let mut deleted = false;
+            if self.active_layer == Layer::SpritePlanning {
+                if let Some(i) = self.sprite_at(world) {
+                    self.level.sprite_instances.remove(i);
+                    let count = self.level.sprite_instances.len();
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Deleted sprite ({count} left)");
+                    deleted = true;
+                }
+            }
+            if !deleted {
+                let active_shapes = self.active_shapes_mut();
+                if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
+                    active_shapes.remove(i);
+                    let count = active_shapes.len();
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!(
+                        "Deleted shape from {} ({} left)",
+                        self.active_layer_name(),
+                        count
+                    );
+                }
             }
         }
 
@@ -497,13 +665,45 @@ impl Game for Editor {
         // Planning grid behind the level content.
         self.draw_grid(canvas);
 
+        // Sprites (always part of the sprite-planning layer).
+        let sprite_alpha = if self.active_layer == Layer::SpritePlanning {
+            1.0
+        } else {
+            0.30
+        };
+        for inst in &self.level.sprite_instances {
+            if let Some(tex) = self.sprite_cache.get(&inst.path) {
+                canvas.draw_texture_ex(
+                    tex,
+                    Vec2D::new(inst.x, inst.y),
+                    0.0,
+                    inst.scale,
+                    WHITE.with_alpha(sprite_alpha),
+                );
+            }
+        }
+
         // Planning layers: active layer is fully opaque, inactive layer fades.
         self.draw_shape_layer(canvas, self.inactive_shapes(), 0.30);
         self.draw_shape_layer(canvas, self.active_shapes(), 1.0);
 
-        // Live preview of the shape currently being dragged out, drawn a little
-        // translucent so it reads as "not yet placed".
-        if let Some(start) = self.drag_start {
+        // Live preview: ghost shape being dragged, or ghost sprite following cursor.
+        if self.active_layer == Layer::SpritePlanning {
+            if let Some(idx) = self.selected_sprite {
+                if let Some(path) = self.available_sprites.get(idx) {
+                    if let Some(tex) = self.sprite_cache.get(path) {
+                        let pos = self.snap_world(self.mouse_world());
+                        canvas.draw_texture_ex(
+                            tex,
+                            pos,
+                            0.0,
+                            self.sprite_scale,
+                            WHITE.with_alpha(0.45),
+                        );
+                    }
+                }
+            }
+        } else if let Some(start) = self.drag_start {
             if let Some(shape) = make_shape(
                 self.tool,
                 start,
@@ -534,7 +734,7 @@ impl Game for Editor {
             WHITE,
         );
 
-        // --- HUD ---
+        // --- HUD: info panel ---
         let save_state = if self.is_dirty { "Unsaved" } else { "Saved" };
         let save_color = if self.is_dirty { ORANGE } else { LIME };
         canvas.rectangle(20.0, 20.0, 340.0, 136.0, BLACK.with_alpha(0.8));
@@ -547,43 +747,70 @@ impl Game for Editor {
         canvas.text("File", 40.0, 118.0, 24.0, GOLD);
         canvas.text(self.current_file_label(), 96.0, 118.0, 20.0, LIGHTGRAY);
 
+        // --- HUD: sprite picker panel (sprite layer only) ---
+        if self.active_layer == Layer::SpritePlanning {
+            canvas.rectangle(20.0, 168.0, 340.0, 104.0, BLACK.with_alpha(0.8));
+            if self.available_sprites.is_empty() {
+                canvas.text("No sprites in sprites/", 40.0, 200.0, 20.0, LIGHTGRAY);
+            } else {
+                canvas.text("Sprite", 40.0, 184.0, 24.0, GOLD);
+                canvas.text(self.selected_sprite_name(), 110.0, 184.0, 22.0, WHITE);
+                canvas.text("[ ]", 240.0, 184.0, 20.0, GOLD);
+                canvas.text("cycle", 275.0, 188.0, 18.0, LIGHTGRAY);
+                canvas.text("Scale", 40.0, 218.0, 24.0, GOLD);
+                canvas.text(
+                    &format!("{:.2}x", self.sprite_scale),
+                    110.0,
+                    218.0,
+                    22.0,
+                    WHITE,
+                );
+                canvas.text(", .", 190.0, 218.0, 20.0, GOLD);
+                canvas.text("half/double", 220.0, 222.0, 18.0, LIGHTGRAY);
+                canvas.text("Click to place", 40.0, 252.0, 20.0, LIGHTGRAY);
+            }
+        }
+
+        // --- HUD: help overlay ---
         if self.show_help {
-            canvas.rectangle(20.0, 120.0, 520.0, 330.0, BLACK.with_alpha(0.8));
-            canvas.text("Editor controls", 40.0, 140.0, 28.0, GOLD);
+            canvas.rectangle(20.0, 290.0, 520.0, 400.0, BLACK.with_alpha(0.8));
+            canvas.text("Editor controls", 40.0, 308.0, 28.0, GOLD);
 
-            canvas.text("Mouse", 40.0, 182.0, 24.0, WHITE);
-            canvas.text("L-drag      Place shape", 60.0, 210.0, 22.0, LIGHTGRAY);
-            canvas.text("R-click     Delete shape", 60.0, 236.0, 22.0, LIGHTGRAY);
-            canvas.text("M-drag      Pan camera", 60.0, 262.0, 22.0, LIGHTGRAY);
-            canvas.text("Wheel       Zoom", 60.0, 288.0, 22.0, LIGHTGRAY);
-
-            canvas.text("Tools", 40.0, 330.0, 24.0, WHITE);
-            canvas.text("R / C       Select tool", 60.0, 358.0, 22.0, LIGHTGRAY);
-            canvas.text("1-6         Select color", 60.0, 384.0, 22.0, LIGHTGRAY);
-
-            canvas.text("File", 290.0, 182.0, 24.0, WHITE);
-            canvas.text("S           Save level", 310.0, 210.0, 22.0, LIGHTGRAY);
-            canvas.text("O           Reload level", 310.0, 236.0, 22.0, LIGHTGRAY);
-
-            canvas.text("Other", 290.0, 288.0, 24.0, WHITE);
-            canvas.text("Z           Undo last", 310.0, 316.0, 22.0, LIGHTGRAY);
-            canvas.text("Tab         Toggle layer", 310.0, 342.0, 22.0, LIGHTGRAY);
+            canvas.text("Mouse", 40.0, 348.0, 24.0, WHITE);
             canvas.text(
-                "X           Clear active layer",
-                310.0,
-                368.0,
-                22.0,
+                "L-click/drag  Place sprite/shape",
+                60.0,
+                372.0,
+                20.0,
                 LIGHTGRAY,
             );
-            canvas.text("F           Reset view", 310.0, 394.0, 22.0, LIGHTGRAY);
             canvas.text(
-                "H           Toggle this help",
-                310.0,
-                420.0,
-                22.0,
+                "R-click       Delete under cursor",
+                60.0,
+                396.0,
+                20.0,
                 LIGHTGRAY,
             );
-            canvas.text("Esc         Quit", 310.0, 446.0, 22.0, LIGHTGRAY);
+            canvas.text("M-drag        Pan camera", 60.0, 420.0, 20.0, LIGHTGRAY);
+            canvas.text("Wheel         Zoom", 60.0, 444.0, 20.0, LIGHTGRAY);
+
+            canvas.text("Shapes", 40.0, 476.0, 24.0, WHITE);
+            canvas.text("R / C    Tool   1-6  Color", 60.0, 500.0, 20.0, LIGHTGRAY);
+
+            canvas.text("Sprites (sprite layer)", 40.0, 532.0, 24.0, WHITE);
+            canvas.text("[ ]  cycle    , .  scale", 60.0, 556.0, 20.0, LIGHTGRAY);
+
+            canvas.text("Level", 290.0, 348.0, 24.0, WHITE);
+            canvas.text("S    Save", 310.0, 372.0, 20.0, LIGHTGRAY);
+            canvas.text("O    Reload", 310.0, 396.0, 20.0, LIGHTGRAY);
+            canvas.text("Tab  Toggle layer", 310.0, 420.0, 20.0, LIGHTGRAY);
+            canvas.text("Z    Undo last shape", 310.0, 444.0, 20.0, LIGHTGRAY);
+            canvas.text("X    Clear layer shapes", 310.0, 468.0, 20.0, LIGHTGRAY);
+
+            canvas.text("View", 290.0, 500.0, 24.0, WHITE);
+            canvas.text("F    Reset view", 310.0, 524.0, 20.0, LIGHTGRAY);
+            canvas.text("H    Toggle help", 310.0, 548.0, 20.0, LIGHTGRAY);
+            canvas.text("Esc  Quit", 310.0, 572.0, 20.0, LIGHTGRAY);
         }
 
         canvas.text(&self.status, 20.0, RENDER_H as f32 - 32.0, 22.0, GOLD);
