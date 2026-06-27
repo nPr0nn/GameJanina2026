@@ -227,4 +227,13 @@ impl<'a> Canvas<'a> {
         self.batch
             .push_text(text, position.x, position.y, font_size, color);
     }
+
+    /// Cover the whole canvas with `color`, composited on top of *everything*
+    /// drawn this frame — including text. This is the building block for
+    /// fade-in/fade-out screen transitions: e.g. `canvas.fade(BLACK.with_alpha(a))`
+    /// with `a` ramping 0→1 fades to black. Only the last call in a frame takes
+    /// effect; a fully transparent color (alpha 0) is a no-op.
+    pub fn fade(&mut self, color: Color) {
+        self.batch.set_overlay(color);
+    }
 }

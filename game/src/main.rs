@@ -1,249 +1,196 @@
 // Run natively: cargo run
 // Run on the web: trunk serve   (WebGPU, with WebGL2 fallback)
+//
+// This binary is a small screen-managed game shell: a Menu, the Gameplay demo,
+// a Pause overlay, and Defeat / Win end screens, with fade-to-black transitions
+// between them. Everything is driven by the keyboard for now (see the on-screen
+// hints and the key handling in `App::update`).
 
+mod gameplay;
+mod transition;
+
+use gameplay::Gameplay;
 use juni::prelude::*;
+use transition::{Screen, Transition};
 
-// A custom fragment shader: an animated rainbow driven by world position and
-// `globals.time`. Same vertex/uniform interface as the built-in shape shader,
-// so it plugs straight into `begin_shader_mode`. Kept inline as a string here,
-// but it could equally live in its own .wgsl file loaded with `include_str!`.
-const RAINBOW_SHADER: &str = r#"
-struct Globals {
-    proj: mat4x4<f32>,
-    time: f32,
-};
-@group(0) @binding(0) var<uniform> globals: Globals;
+// Virtual canvas size (matches `Config::render_*`), used to center UI text.
+const RENDER_W: f32 = 1280.0;
+const RENDER_H: f32 = 720.0;
 
-struct VsOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>) -> VsOut {
-    var out: VsOut;
-    out.clip = globals.proj * vec4<f32>(position, 0.0, 1.0);
-    out.world = position;
-    return out;
-}
-
-// Hue (0..1) -> RGB.
-fn hue(h: f32) -> vec3<f32> {
-    let r = abs(h * 6.0 - 3.0) - 1.0;
-    let g = 2.0 - abs(h * 6.0 - 2.0);
-    let b = 2.0 - abs(h * 6.0 - 4.0);
-    return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let h = fract((in.world.x + in.world.y) * 0.0015 + globals.time * 0.2);
-    return vec4<f32>(hue(h), 1.0);
-}
-"#;
-
-struct Demo {
+/// A pre-measured, horizontally centered line of UI text. Width is measured once
+/// (at construction, where a `Context` is available) so `draw` needs no measuring.
+struct Centered {
+    text: &'static str,
+    size: f32,
     x: f32,
-    dir: f32,
-    player: Vec2D,
-    mouse: Vec2D,
-    rainbow: Shader,
-    cow: Texture,
-    pop: Sound,
-    spin: f32,
-    zoom: f32,
-    // HUD state: sampled FPS and the measured width of the title label (so we
-    // can size a backing panel behind it — demonstrates measure_text).
-    fps: u32,
-    label_width: f32,
+    y: f32,
 }
 
-const LABEL: &str = "juni — text via glyphon";
-const LABEL_SIZE: f32 = 40.0;
+impl Centered {
+    fn new(ctx: &Context, text: &'static str, size: f32, y: f32) -> Self {
+        let width = ctx.measure_text(text, size).x;
+        Self { text, size, x: (RENDER_W - width) * 0.5, y }
+    }
 
-impl Game for Demo {
-    fn init(ctx: &mut Context) -> Self {
-        Demo {
-            x: 100.0, dir: 1.0,
-            player: Vec2D{ x: 0.0, y: 0.0 },
-            mouse: Vec2D::ZERO,
+    fn draw(&self, canvas: &mut Canvas, color: Color) {
+        canvas.text(self.text, self.x, self.y, self.size, color);
+    }
+}
 
-            // Compile the custom shader once, up front (raylib's LoadShader).
-            rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
+/// Pre-built UI labels for the non-gameplay screens (all static text).
+struct Ui {
+    menu_title: Centered,
+    menu_prompt: Centered,
+    pause_title: Centered,
+    pause_prompt: Centered,
+    defeat_title: Centered,
+    defeat_prompt: Centered,
+    win_title: Centered,
+    win_prompt: Centered,
+}
 
-            // Load the texture once. `include_bytes!` embeds the PNG (works for
-            // `cargo run`, `--example`, and the web build); the engine decodes
-            // and uploads it
-            cow: ctx.load_texture_from_memory(include_bytes!("assets/vaca.png")),
-
-            // Decode the WAV once up front (raylib's LoadSound). Played on right
-            // click in update().
-            pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
-            spin: 0.0,
-            zoom: 1.0,
-            fps: 0,
-            label_width: ctx.measure_text(LABEL, LABEL_SIZE).x,
+impl Ui {
+    fn new(ctx: &Context) -> Self {
+        Self {
+            menu_title: Centered::new(ctx, "JUNI", 120.0, 200.0),
+            menu_prompt: Centered::new(ctx, "Press ENTER to play    ·    ESC to quit", 32.0, 400.0),
+            pause_title: Centered::new(ctx, "PAUSED", 90.0, 250.0),
+            pause_prompt: Centered::new(ctx, "ESC / P resume    ·    M menu", 32.0, 380.0),
+            defeat_title: Centered::new(ctx, "DEFEAT", 100.0, 230.0),
+            defeat_prompt: Centered::new(ctx, "ENTER retry    ·    M menu", 32.0, 380.0),
+            win_title: Centered::new(ctx, "YOU WIN!", 100.0, 230.0),
+            win_prompt: Centered::new(ctx, "ENTER play again    ·    M menu", 32.0, 380.0),
         }
+    }
+}
 
-   }
+struct App {
+    screen: Screen,
+    transition: Transition,
+    gameplay: Gameplay,
+    ui: Ui,
+}
+
+impl App {
+    /// Request a fade transition to `target` (no-op if one is already running).
+    fn go(&mut self, target: Screen) {
+        self.transition.start(target);
+    }
+}
+
+impl Game for App {
+    fn init(ctx: &mut Context) -> Self {
+        Self {
+            screen: Screen::Menu,
+            transition: Transition::new(),
+            gameplay: Gameplay::new(ctx),
+            ui: Ui::new(ctx),
+        }
+    }
 
     fn update(&mut self, ctx: &mut Context) {
-        // Track the cursor in virtual-canvas coordinates.
-        self.mouse = ctx.mouse_position();
-        self.fps = ctx.fps;
-
-        // Play a pop on each right-click.
-        if ctx.is_mouse_button_pressed(MouseButton::Left) {
-            ctx.play_sound(&self.pop);
+        // Advance any running fade. When it reports the midpoint, swap screens.
+        if let Some(target) = self.transition.update(ctx.dt) {
+            // Start a fresh run whenever we enter gameplay other than by
+            // resuming from pause (i.e. from the menu or after a win/defeat).
+            if target == Screen::Gameplay && self.screen != Screen::Pause {
+                self.gameplay.reset();
+            }
+            self.screen = target;
         }
 
-        // Press F to toggle fullscreen, Esc to quit.
+        // Input is frozen while a transition plays so it can't be interrupted.
+        if self.transition.is_active() {
+            return;
+        }
+
+        // Fullscreen toggle works on every screen.
         if ctx.is_key_pressed(Key::F) {
             ctx.toggle_fullscreen();
         }
-        if ctx.is_key_pressed(Key::Escape) {
-            ctx.exit();
-        }
 
-        // Player Movement
-        if ctx.is_key_down(Key::W) {
-            self.player.y -= 5.0;
-        }
-        if ctx.is_key_down(Key::A) {
-            self.player.x -= 5.0;
-        }
-        if ctx.is_key_down(Key::S) {
-            self.player.y += 5.0;
-        }
-        if ctx.is_key_down(Key::D) {
-            self.player.x += 5.0;
-        }
-
-        // Spin the rotating cow at 90 deg/sec.
-        self.spin += 90.0 * ctx.dt;
-
-        // Mouse wheel zooms the camera in/out (clamped).
-        self.zoom = (self.zoom + ctx.mouse_wheel_move() * 0.1).clamp(0.1, 4.0);
-
-        // Fixed-timestep movement: 240 virtual px/sec, bouncing in [100, 1080].
-        self.x += self.dir * 240.0 * ctx.dt;
-        if self.x > 1080.0 {
-            self.x = 1080.0;
-            self.dir = -1.0;
-        } else if self.x < 100.0 {
-            self.x = 100.0;
-            self.dir = 1.0;
+        match self.screen {
+            Screen::Menu => {
+                if ctx.is_key_pressed(Key::Enter) {
+                    self.go(Screen::Gameplay);
+                }
+                if ctx.is_key_pressed(Key::Escape) {
+                    ctx.exit();
+                }
+            }
+            Screen::Gameplay => {
+                self.gameplay.update(ctx);
+                if ctx.is_key_pressed(Key::P) || ctx.is_key_pressed(Key::Escape) {
+                    self.go(Screen::Pause);
+                } else if ctx.is_key_pressed(Key::K) {
+                    self.go(Screen::Defeat);
+                } else if ctx.is_key_pressed(Key::L) {
+                    self.go(Screen::Win);
+                }
+            }
+            Screen::Pause => {
+                if ctx.is_key_pressed(Key::P) || ctx.is_key_pressed(Key::Escape) {
+                    self.go(Screen::Gameplay);
+                } else if ctx.is_key_pressed(Key::M) {
+                    self.go(Screen::Menu);
+                }
+            }
+            Screen::Defeat | Screen::Win => {
+                if ctx.is_key_pressed(Key::Enter) {
+                    self.go(Screen::Gameplay);
+                } else if ctx.is_key_pressed(Key::M) {
+                    self.go(Screen::Menu);
+                }
+            }
         }
     }
 
     fn draw(&mut self, canvas: &mut Canvas) {
-        canvas.clear_background(RED);
+        match self.screen {
+            Screen::Menu => {
+                canvas.clear_background(DARKBLUE);
+                self.ui.menu_title.draw(canvas, WHITE);
+                self.ui.menu_prompt.draw(canvas, SKYBLUE);
+            }
+            Screen::Gameplay => {
+                self.gameplay.draw(canvas);
+            }
+            Screen::Pause => {
+                // Keep the (frozen) game visible behind a translucent dim, with
+                // the pause text on top.
+                self.gameplay.draw(canvas);
+                canvas.rectangle(0.0, 0.0, RENDER_W, RENDER_H, BLACK.with_alpha(0.55));
+                self.ui.pause_title.draw(canvas, WHITE);
+                self.ui.pause_prompt.draw(canvas, LIGHTGRAY);
+            }
+            Screen::Defeat => {
+                canvas.clear_background(MAROON);
+                self.ui.defeat_title.draw(canvas, WHITE);
+                self.ui.defeat_prompt.draw(canvas, LIGHTGRAY);
+            }
+            Screen::Win => {
+                canvas.clear_background(DARKGREEN);
+                self.ui.win_title.draw(canvas, WHITE);
+                self.ui.win_prompt.draw(canvas, LIGHTGRAY);
+            }
+        }
 
-        // View the whole scene through a 2D camera that follows the player
-        // (its center pinned to the screen center) and zooms with the wheel.
-        // Everything until end_mode_2d is drawn in world space.
-        let camera = Camera2D {
-            target: self.player + Vec2D::new(50.0, 50.0),
-            offset: Vec2D::new(640.0, 360.0),
-            rotation: 0.0,
-            zoom: self.zoom,
-        };
-        canvas.begin_mode_2d(camera);
-
-        // Static rectangle.
-        canvas.rectangle(60.0, 60.0, 300.0, 180.0, SKYBLUE);
-
-        // Rectangle from a Rectangle struct.
-        canvas.rectangle_from_rect(Rect::new(60.0, 300.0, 300.0, 180.0), GOLD);
-
-        // A triangle.
-        canvas.triangle(
-            Vec2D::new(640.0, 120.0),
-            Vec2D::new(540.0, 320.0),
-            Vec2D::new(740.0, 320.0),
-            MAROON,
-        );
-
-        // A free-form quad (parallelogram).
-        canvas.quad(
-            Vec2D::new(820.0, 120.0),
-            Vec2D::new(1120.0, 120.0),
-            Vec2D::new(1060.0, 320.0),
-            Vec2D::new(760.0, 320.0),
-            DARKGREEN,
-        );
-
-        // An animated rainbow quad, drawn with a custom shader. Everything
-        // between begin/end_shader_mode uses `self.rainbow` instead of the
-        // default shape shader (raylib's BeginShaderMode / EndShaderMode). The
-        // quad's own vertex color is ignored — the fragment shader computes it.
-        canvas.begin_shader_mode(&self.rainbow);
-        canvas.quad(
-            Vec2D::new(400.0, 300.0),
-            Vec2D::new(500.0, 300.0),
-            Vec2D::new(500.0, 480.0),
-            Vec2D::new(400.0, 480.0),
-            RED,
-        );
-        canvas.end_shader_mode();
-
-        // A circle and a regular polygon (pentagon).
-        canvas.regular_polygon(Vec2D::new(1140.0, 480.0), 5, 70.0, -90.0, ORANGE);
-
-        canvas.draw_texture_ex(&self.cow, Vec2D::new(520.0, 230.0), 180.0, 6.0, WHITE);
-
-        // The same texture via DrawTexturePro: scaled 4x and spun about its
-        // center, which is placed at (1180, 600). A red tint is applied.
-        let size = self.cow.width() as f32 * 4.0;
-        canvas.draw_texture_pro(
-            &self.cow,
-            Rect::new(0.0, 0.0, self.cow.width() as f32, self.cow.height() as f32),
-            Rect::new(1180.0, 600.0, size, size),
-            Vec2D::new(size / 2.0, size / 2.0),
-            self.spin,
-            RED,
-        );
-
-        // A thick line from the canvas center to the mouse cursor. We're inside
-        // camera mode, so convert these screen-space points to world space —
-        // the camera maps them back to the exact same screen positions, keeping
-        // the line pinned to the center and the cursor regardless of zoom/pan.
-        let center = camera.screen_to_world(Vec2D::new(640.0, 360.0));
-        let cursor = camera.screen_to_world(self.mouse);
-        canvas.line(center, cursor, 5.0, DARKBLUE);
-
-        // The moving rectangle.
-        canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
-        canvas.rectangle(self.player.x, self.player.y, 100.0, 100.0, BLACK);
-        canvas.draw_texture_ex(&self.cow, self.player, 0.0, 6.0, WHITE);
-
-        canvas.end_mode_2d();
-
-        // --- HUD text (screen space, drawn after end_mode_2d) ---
-        // A title label with a translucent backing panel sized via the width we
-        // measured in init() with ctx.measure_text.
-        canvas.rectangle(20.0, 20.0, self.label_width + 30.0, LABEL_SIZE + 20.0, DARKBLUE);
-        canvas.text(LABEL, 35.0, 30.0, LABEL_SIZE, WHITE);
-
-        // Live FPS readout, and a hint line.
-        canvas.text(&format!("FPS: {}", self.fps), 35.0, 90.0, 28.0, LIME);
-        canvas.text(
-            "Pào, WASD move · wheel zoom · F fullscreen · Esc quit",
-            35.0,
-            680.0,
-            24.0,
-            WHITE,
-        );
+        // The fade overlay, composited over everything (text included). Zero
+        // alpha when idle, so this is a no-op outside transitions.
+        let alpha = self.transition.alpha();
+        if alpha > 0.0 {
+            canvas.fade(BLACK.with_alpha(alpha));
+        }
     }
 }
 
 fn main() {
-    run::<Demo>(Config {
+    run::<App>(Config {
         width: 1280,
         height: 720,
-        render_width: 1280,
-        render_height: 720,
-        title: "juni — shapes".to_string(),
+        render_width: RENDER_W as u32,
+        render_height: RENDER_H as u32,
+        title: "juni — screens".to_string(),
         target_ups: 60,
         centered: true,
         resizable: false,

@@ -755,13 +755,21 @@ impl Renderer {
             }
         }
 
-        // Pass 1.5: text, drawn on top of the scene. It targets the single-sample
-        // resolved texture with a *load* op, so it composites over the shapes
-        // regardless of MSAA. Skipped entirely when no text was queued.
-        if !self.batch.texts.is_empty() {
-            self.text.borrow_mut().prepare(gfx, &self.batch.texts);
+        // Pass 1.5: text and the fade overlay, both drawn on top of the scene.
+        // Targets the single-sample resolved texture with a *load* op, so it
+        // composites over the shapes regardless of MSAA. Text first, then the
+        // overlay on top of text. Skipped when there's neither.
+        let has_text = !self.batch.texts.is_empty();
+        let overlay = self.batch.overlay.filter(|c| c.a > 0);
+        if has_text || overlay.is_some() {
+            if has_text {
+                self.text.borrow_mut().prepare(gfx, &self.batch.texts);
+            }
+            if let Some(color) = overlay {
+                self.upload_overlay(gfx, color);
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("juni text pass"),
+                label: Some("juni text/overlay pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.sampled_view,
                     depth_slice: None,
@@ -776,7 +784,15 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.text.borrow_mut().render(&mut pass);
+            if has_text {
+                self.text.borrow_mut().render(&mut pass);
+            }
+            if overlay.is_some() {
+                pass.set_pipeline(&self.overlay_pipeline);
+                pass.set_bind_group(0, &self.globals_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.overlay_buffer.slice(..));
+                pass.draw(0..6, 0..1);
+            }
         }
 
         // Pass 2: render texture -> swapchain (letterboxed).
@@ -815,6 +831,20 @@ impl Renderer {
 
         gfx.queue.submit(Some(encoder.finish()));
         frame.present();
+    }
+
+    /// Rewrite the overlay buffer with a fullscreen quad (two triangles covering
+    /// the whole virtual canvas) in `color`, for the fade pass.
+    fn upload_overlay(&self, gfx: &Graphics, color: Color) {
+        let (w, h) = (self.render_width as f32, self.render_height as f32);
+        let lin = color.to_linear();
+        let v = |x: f32, y: f32| Vertex { position: [x, y], color: lin, uv: [0.0; 2] };
+        let quad = [
+            v(0.0, 0.0), v(w, 0.0), v(w, h),
+            v(0.0, 0.0), v(w, h), v(0.0, h),
+        ];
+        gfx.queue
+            .write_buffer(&self.overlay_buffer, 0, bytemuck::cast_slice(&quad));
     }
 
     fn upload_vertices(&mut self, gfx: &Graphics) {

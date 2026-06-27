@@ -23,8 +23,8 @@ use glyphon::{
 /// The embedded default font (raylib ships a built-in font too). Liberation Sans
 /// is metric-compatible with Arial and licensed under the SIL Open Font License,
 /// so embedding and redistributing it is fine.
-const DEFAULT_FONT: &[u8] = include_bytes!("assets/LiberationSans-Regular.ttf");
-const DEFAULT_FAMILY: &str = "Liberation Sans";
+const DEFAULT_FONT: &[u8] = include_bytes!("assets/OFLGoudyStM.otf");
+const DEFAULT_FAMILY: &str = "";
 
 /// Line height as a multiple of the font size. cosmic-text needs a line height
 /// for vertical layout; raylib's default text spacing is comparable.
