@@ -1,11 +1,10 @@
 //! A simple, serializable **level format** shared by the game and the editor.
 //!
-//! A [`Level`] is just a list of [`Shape`]s (rectangles and circles) in **world
-//! coordinates** — the space a [`Camera2D`](crate::Camera2D) looks at. The
-//! `editor` binary authors them through a camera and writes one out with
-//! [`Level::save`]; the game reads it back with [`Level::load`] and renders it
-//! with [`Level::draw`] inside its own camera. The on-disk form is plain JSON,
-//! so levels are hand-editable and diff-friendly.
+//! A [`Level`] stores two ordered lists of [`Shape`]s in **world coordinates** —
+//! the space a [`Camera2D`](crate::Camera2D) looks at. The editor uses one layer
+//! for sprite planning and one for collision-box planning. The game reads the
+//! same file and renders the sprite-planning layer with [`Level::draw`]. The
+//! on-disk form is plain JSON, so levels are hand-editable and diff-friendly.
 
 use crate::canvas::Canvas;
 use crate::color::Color;
@@ -42,8 +41,49 @@ impl Shape {
     /// Draw this shape into `canvas`.
     pub fn draw(&self, canvas: &mut Canvas) {
         match *self {
-            Shape::Rect { x, y, width, height, color } => canvas.rectangle(x, y, width, height, color),
-            Shape::Circle { x, y, radius, color } => canvas.circle(Vec2D::new(x, y), radius, color),
+            Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => canvas.rectangle(x, y, width, height, color),
+            Shape::Circle {
+                x,
+                y,
+                radius,
+                color,
+            } => canvas.circle(Vec2D::new(x, y), radius, color),
+        }
+    }
+
+    /// Return a copy of this shape with its color alpha scaled to `alpha`.
+    pub fn with_alpha(&self, alpha: f32) -> Self {
+        match *self {
+            Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color: color.with_alpha(alpha),
+            },
+            Shape::Circle {
+                x,
+                y,
+                radius,
+                color,
+            } => Shape::Circle {
+                x,
+                y,
+                radius,
+                color: color.with_alpha(alpha),
+            },
         }
     }
 
@@ -51,18 +91,26 @@ impl Shape {
     /// editor for click-to-delete hit testing.
     pub fn contains(&self, p: Vec2D) -> bool {
         match *self {
-            Shape::Rect { x, y, width, height, .. } => {
-                p.x >= x && p.x <= x + width && p.y >= y && p.y <= y + height
-            }
+            Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => p.x >= x && p.x <= x + width && p.y >= y && p.y <= y + height,
             Shape::Circle { x, y, radius, .. } => Vec2D::new(x, y).distance(p) <= radius,
         }
     }
 }
 
-/// An ordered collection of shapes. Later shapes draw on top of earlier ones.
+/// An ordered collection of planning layers. Later shapes within each layer
+/// draw on top of earlier ones.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Level {
-    pub shapes: Vec<Shape>,
+    #[serde(default, alias = "shapes")]
+    pub sprite_shapes: Vec<Shape>,
+    #[serde(default)]
+    pub collision_shapes: Vec<Shape>,
 }
 
 impl Level {
@@ -71,9 +119,9 @@ impl Level {
         Self::default()
     }
 
-    /// Draw every shape, in order.
+    /// Draw the sprite-planning layer, in order.
     pub fn draw(&self, canvas: &mut Canvas) {
-        for shape in &self.shapes {
+        for shape in &self.sprite_shapes {
             shape.draw(canvas);
         }
     }
@@ -81,7 +129,8 @@ impl Level {
     /// Serialize to pretty JSON.
     pub fn to_json(&self) -> String {
         // Both ends control the type, so this can't realistically fail.
-        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{\"shapes\":[]}".to_string())
+        serde_json::to_string_pretty(self)
+            .unwrap_or_else(|_| "{\"sprite_shapes\":[],\"collision_shapes\":[]}".to_string())
     }
 
     /// Parse from JSON text.

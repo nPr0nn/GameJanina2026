@@ -30,6 +30,12 @@ enum Tool {
     Circle,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Layer {
+    SpritePlanning,
+    CollisionPlanning,
+}
+
 /// Color choices, selectable with the number keys 1–6.
 const PALETTE: [Color; 6] = [RED, ORANGE, GOLD, LIME, SKYBLUE, VIOLET];
 
@@ -45,6 +51,7 @@ static STARTUP: OnceLock<StartupConfig> = OnceLock::new();
 struct Editor {
     current_path: String,
     level: Level,
+    active_layer: Layer,
     tool: Tool,
     color: Color,
     /// Where (in world space) the left button went down, while a drag is in
@@ -68,6 +75,47 @@ struct Editor {
 }
 
 impl Editor {
+    fn active_layer_name(&self) -> &'static str {
+        match self.active_layer {
+            Layer::SpritePlanning => "Sprite",
+            Layer::CollisionPlanning => "Collision",
+        }
+    }
+
+    fn default_layer_color(layer: Layer) -> Color {
+        match layer {
+            Layer::SpritePlanning => BLUE,
+            Layer::CollisionPlanning => RED,
+        }
+    }
+
+    fn active_shapes(&self) -> &[Shape] {
+        match self.active_layer {
+            Layer::SpritePlanning => &self.level.sprite_shapes,
+            Layer::CollisionPlanning => &self.level.collision_shapes,
+        }
+    }
+
+    fn active_shapes_mut(&mut self) -> &mut Vec<Shape> {
+        match self.active_layer {
+            Layer::SpritePlanning => &mut self.level.sprite_shapes,
+            Layer::CollisionPlanning => &mut self.level.collision_shapes,
+        }
+    }
+
+    fn inactive_shapes(&self) -> &[Shape] {
+        match self.active_layer {
+            Layer::SpritePlanning => &self.level.collision_shapes,
+            Layer::CollisionPlanning => &self.level.sprite_shapes,
+        }
+    }
+
+    fn draw_shape_layer(&self, canvas: &mut Canvas, shapes: &[Shape], alpha: f32) {
+        for shape in shapes {
+            shape.with_alpha(alpha).draw(canvas);
+        }
+    }
+
     /// The current view. `offset` is the origin so that at `target = 0`,
     /// `zoom = 1` world coordinates map 1:1 to the screen.
     fn camera(&self) -> Camera2D {
@@ -92,11 +140,26 @@ impl Editor {
         )
     }
 
+    fn current_file_label(&self) -> &str {
+        Path::new(&self.current_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&self.current_path)
+    }
+
     fn window_title(&self) -> String {
         if self.is_dirty {
-            format!("{WINDOW_TITLE} — {} *", self.current_path)
+            format!(
+                "{WINDOW_TITLE} — {} — {} *",
+                self.current_path,
+                self.active_layer_name()
+            )
         } else {
-            format!("{WINDOW_TITLE} — {}", self.current_path)
+            format!(
+                "{WINDOW_TITLE} — {} — {}",
+                self.current_path,
+                self.active_layer_name()
+            )
         }
     }
 
@@ -199,11 +262,12 @@ fn prompt_level_path() -> io::Result<String> {
 fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
     if Path::new(path).exists() {
         let level = Level::load(path)?;
-        let n = level.shapes.len();
+        let sprite_n = level.sprite_shapes.len();
+        let collision_n = level.collision_shapes.len();
         Ok(StartupConfig {
             path: path.to_string(),
             level,
-            status: format!("Loaded {path} ({n} shapes)"),
+            status: format!("Loaded {path} ({sprite_n} sprite, {collision_n} collision)"),
         })
     } else {
         if let Some(parent) = Path::new(path)
@@ -232,8 +296,9 @@ impl Game for Editor {
         let editor = Self {
             current_path: startup.path.clone(),
             level: startup.level.clone(),
+            active_layer: Layer::SpritePlanning,
             tool: Tool::Rect,
-            color: PALETTE[0],
+            color: Self::default_layer_color(Layer::SpritePlanning),
             drag_start: None,
             mouse: Vec2D::ZERO,
             target: Vec2D::ZERO,
@@ -260,6 +325,15 @@ impl Game for Editor {
             } else {
                 "Help hidden".to_string()
             };
+        }
+        if ctx.is_key_pressed(Key::Tab) {
+            self.active_layer = match self.active_layer {
+                Layer::SpritePlanning => Layer::CollisionPlanning,
+                Layer::CollisionPlanning => Layer::SpritePlanning,
+            };
+            self.color = Self::default_layer_color(self.active_layer);
+            self.refresh_window_title(ctx);
+            self.status = format!("Active layer: {}", self.active_layer_name());
         }
 
         // --- Camera: middle-drag pans, wheel zooms about the cursor. ---
@@ -325,35 +399,58 @@ impl Game for Editor {
         if ctx.is_mouse_button_released(MouseButton::Left) {
             if let Some(start) = self.drag_start.take() {
                 if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
-                    self.level.shapes.push(shape);
+                    let active_shapes = self.active_shapes_mut();
+                    active_shapes.push(shape);
+                    let count = active_shapes.len();
                     self.is_dirty = true;
                     self.refresh_window_title(ctx);
-                    self.status = format!("Placed shape ({} total)", self.level.shapes.len());
+                    self.status = format!(
+                        "Placed shape on {} ({} total)",
+                        self.active_layer_name(),
+                        count
+                    );
                 }
             }
         }
 
         // Right click: delete the topmost shape under the cursor.
         if ctx.is_mouse_button_pressed(MouseButton::Right) {
-            if let Some(i) = self.level.shapes.iter().rposition(|s| s.contains(world)) {
-                self.level.shapes.remove(i);
+            let active_shapes = self.active_shapes_mut();
+            if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
+                active_shapes.remove(i);
+                let count = active_shapes.len();
                 self.is_dirty = true;
                 self.refresh_window_title(ctx);
-                self.status = format!("Deleted shape ({} left)", self.level.shapes.len());
+                self.status = format!(
+                    "Deleted shape from {} ({} left)",
+                    self.active_layer_name(),
+                    count
+                );
             }
         }
 
         // Z undo last, X clear all.
-        if ctx.is_key_pressed(Key::Z) && self.level.shapes.pop().is_some() {
-            self.is_dirty = true;
-            self.refresh_window_title(ctx);
-            self.status = format!("Undid last ({} left)", self.level.shapes.len());
+        if ctx.is_key_pressed(Key::Z) {
+            let active_shapes = self.active_shapes_mut();
+            if active_shapes.pop().is_some() {
+                let count = active_shapes.len();
+                self.is_dirty = true;
+                self.refresh_window_title(ctx);
+                self.status = format!(
+                    "Undid last on {} ({} left)",
+                    self.active_layer_name(),
+                    count
+                );
+            }
         }
-        if ctx.is_key_pressed(Key::X) && !self.level.shapes.is_empty() {
-            self.level.shapes.clear();
-            self.is_dirty = true;
-            self.refresh_window_title(ctx);
-            self.status = "Cleared all shapes".to_string();
+        if ctx.is_key_pressed(Key::X) {
+            let active_shapes = self.active_shapes_mut();
+            if !active_shapes.is_empty() {
+                active_shapes.clear();
+                self.is_dirty = true;
+                self.refresh_window_title(ctx);
+                self.status = format!("Cleared {} layer", self.active_layer_name());
+            }
         }
 
         // S save, O reload from disk.
@@ -363,9 +460,10 @@ impl Game for Editor {
                     self.is_dirty = false;
                     self.refresh_window_title(ctx);
                     format!(
-                        "Saved {} ({} shapes)",
+                        "Saved {} ({} sprite, {} collision)",
                         self.current_path,
-                        self.level.shapes.len()
+                        self.level.sprite_shapes.len(),
+                        self.level.collision_shapes.len()
                     )
                 }
                 Err(e) => format!("Save failed: {e}"),
@@ -378,9 +476,10 @@ impl Game for Editor {
                     self.is_dirty = false;
                     self.refresh_window_title(ctx);
                     format!(
-                        "Reloaded {} ({} shapes)",
+                        "Reloaded {} ({} sprite, {} collision)",
                         self.current_path,
-                        self.level.shapes.len()
+                        self.level.sprite_shapes.len(),
+                        self.level.collision_shapes.len()
                     )
                 }
                 Err(e) => format!("Load failed: {e}"),
@@ -398,8 +497,9 @@ impl Game for Editor {
         // Planning grid behind the level content.
         self.draw_grid(canvas);
 
-        // Placed shapes.
-        self.level.draw(canvas);
+        // Planning layers: active layer is fully opaque, inactive layer fades.
+        self.draw_shape_layer(canvas, self.inactive_shapes(), 0.30);
+        self.draw_shape_layer(canvas, self.active_shapes(), 1.0);
 
         // Live preview of the shape currently being dragged out, drawn a little
         // translucent so it reads as "not yet placed".
@@ -435,6 +535,18 @@ impl Game for Editor {
         );
 
         // --- HUD ---
+        let save_state = if self.is_dirty { "Unsaved" } else { "Saved" };
+        let save_color = if self.is_dirty { ORANGE } else { LIME };
+        canvas.rectangle(20.0, 20.0, 340.0, 136.0, BLACK.with_alpha(0.8));
+        canvas.text("Layer", 40.0, 34.0, 24.0, GOLD);
+        canvas.text(self.active_layer_name(), 110.0, 34.0, 24.0, WHITE);
+        canvas.text("Tab", 260.0, 34.0, 24.0, GOLD);
+        canvas.text("toggle", 300.0, 34.0, 20.0, LIGHTGRAY);
+        canvas.text("State", 40.0, 76.0, 24.0, GOLD);
+        canvas.text(save_state, 110.0, 76.0, 24.0, save_color);
+        canvas.text("File", 40.0, 118.0, 24.0, GOLD);
+        canvas.text(self.current_file_label(), 96.0, 118.0, 20.0, LIGHTGRAY);
+
         if self.show_help {
             canvas.rectangle(20.0, 120.0, 520.0, 330.0, BLACK.with_alpha(0.8));
             canvas.text("Editor controls", 40.0, 140.0, 28.0, GOLD);
@@ -455,22 +567,23 @@ impl Game for Editor {
 
             canvas.text("Other", 290.0, 288.0, 24.0, WHITE);
             canvas.text("Z           Undo last", 310.0, 316.0, 22.0, LIGHTGRAY);
+            canvas.text("Tab         Toggle layer", 310.0, 342.0, 22.0, LIGHTGRAY);
             canvas.text(
-                "X           Clear all shapes",
+                "X           Clear active layer",
                 310.0,
-                342.0,
+                368.0,
                 22.0,
                 LIGHTGRAY,
             );
-            canvas.text("F           Reset view", 310.0, 368.0, 22.0, LIGHTGRAY);
+            canvas.text("F           Reset view", 310.0, 394.0, 22.0, LIGHTGRAY);
             canvas.text(
                 "H           Toggle this help",
                 310.0,
-                394.0,
+                420.0,
                 22.0,
                 LIGHTGRAY,
             );
-            canvas.text("Esc         Quit", 310.0, 420.0, 22.0, LIGHTGRAY);
+            canvas.text("Esc         Quit", 310.0, 446.0, 22.0, LIGHTGRAY);
         }
 
         canvas.text(&self.status, 20.0, RENDER_H as f32 - 32.0, 22.0, GOLD);
