@@ -26,12 +26,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # `wasm-bindgen` feature, enabled below for that target).
 kira = { version = "0.12.1", default-features = false, features = ["cpal", "wav", "pcm"] }
 glyphon = "0.11"
-# Level format: Color, Shape, SpriteInstance, Level — shared with the editor.
-# The engine adds Canvas-dependent drawing via extension traits (ShapeDrawExt,
-# LevelDrawExt) but keeps this crate free of wgpu/winit/bytemuck.
-level_format = { path = "../level_format" }
-# serde/serde_json are still needed by level_format's transitive deps; keep
-# them explicit here so engine-internal code can derive/serialize if needed.
+# Level (de)serialization, shared by the game (loads) and the editor (writes).
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 

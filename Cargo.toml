@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["engine", "game", "editor", "level_format"]
+members = ["engine", "game", "editor"]
 # `cargo run`/`cargo build` with no `-p` flag operate on the game binary; the
 # engine is a library and has nothing to run.
 default-members = ["game"]
