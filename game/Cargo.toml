@@ -1,0 +1,13 @@
+[package]
+name = "game"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "game"
+path = "src/main.rs"
+
+[dependencies]
+# The engine. All graphics/audio/input/wasm plumbing lives here; the game only
+# implements the `Game` trait and calls `juni::run`.
+juni = { path = "../engine" }

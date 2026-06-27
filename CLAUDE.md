@@ -6,10 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `juni` is a small cross-platform **2D game engine** built on WGPU (27.0.1) +
 Winit (0.30), with a **Raylib-inspired** API. It compiles to native
-(Windows/Linux/macOS) and to WebAssembly (WebGPU, with WebGL2 fallback). The crate is a library
-(`src/lib.rs`); demos live in `examples/`, and `src/main.rs` simply
-`include!`s `examples/shapes.rs` so the same demo is the web/`cargo run` binary
-(no duplication, no multi-target warning).
+(Windows/Linux/macOS) and to WebAssembly (WebGPU, with WebGL2 fallback).
+
+The repo is a **Cargo workspace** with two members:
+
+- **`engine/`** — the `juni` **library** crate (`engine/src/lib.rs`). All
+  graphics/audio/input/wasm plumbing lives here.
+- **`game/`** — the binary crate (`game/src/main.rs`) that depends on `juni`,
+  implements the `Game` trait, and ships its assets under `game/src/assets/`.
+
+The root `Cargo.toml` sets `default-members = ["game"]`, so a bare `cargo run`
+builds and runs the game.
 
 The engine owns the main loop: users implement the `Game` trait
 (`init`/`update`/`draw`) and call `juni::run::<G>(config)`. All drawing happens at
@@ -19,15 +26,14 @@ letterboxed onto the window.
 ## Commands
 
 ```sh
-cargo run                            # native demo (examples/shapes.rs via src/main.rs)
-cargo run --example shapes           # same demo as a cargo example
+cargo run                            # native game (game/src/main.rs)
 cargo test                           # unit tests (e.g. letterbox math) + doctests
 cargo clippy --all-targets           # lints (kept clean)
 
 # Web (WASM) — one-time: rustup target add wasm32-unknown-unknown; cargo install --locked trunk
 trunk serve                          # then open http://127.0.0.1:8080 (no flags needed)
 
-cargo build --target wasm32-unknown-unknown  # wasm build check
+cargo build --bin game --target wasm32-unknown-unknown  # wasm build check
 ```
 
 Run a single test: `cargo test taller_window_letterboxes`.
@@ -90,18 +96,18 @@ Virtual-canvas pixels, origin top-left, +Y down (Raylib convention). The ortho
 matrix in `renderer.rs::ortho` maps `(0,0)-(render_w,render_h)` into wgpu NDC.
 
 ### Web build
-`index.html` is the Trunk entry (`data-trunk rel="rust" data-bin="juni"`) — it
-builds the `src/main.rs` binary (Trunk 0.21's `data-bin` maps to `cargo --bin`
-and cannot target a cargo example, hence the `include!` shim).
+`index.html` (at the workspace root) is the Trunk entry
+(`data-trunk rel="rust" data-bin="game"`) — Trunk reads the workspace
+`Cargo.toml` and `data-bin` maps to `cargo build --bin game`, building the
+game crate for wasm.
 
 The web build compiles **both** backends: `wgpu`'s default features include
-`webgpu`, and `Cargo.toml` additionally enables the `webgl` feature only for the
-`wasm32` target (in `[target.'cfg(target_arch = "wasm32")'.dependencies]`).
+`webgpu`, and `engine/Cargo.toml` additionally enables the `webgl` feature only
+for the `wasm32` target (in `[target.'cfg(target_arch = "wasm32")'.dependencies]`).
 At runtime wgpu prefers **WebGPU** and falls back to **WebGL2**. The webgl
 feature is essential — without it, browsers lacking WebGPU make `request_adapter`
 trap with "Could not get an adapter". There is no `webgl` *cargo* feature to pass
-to Trunk; `trunk serve` with no flags is the only command (Trunk also can't
-target a cargo `--example`).
+to Trunk; `trunk serve` with no flags is the only command.
 
 `Trunk.toml` pins the serve address to `127.0.0.1:8080` because Trunk otherwise
 advertises `http://localhost.:8080/` (trailing dot), which some browsers refuse.

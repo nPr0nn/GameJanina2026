@@ -52,9 +52,8 @@ fn main() {
 ## Running
 
 ```sh
-# Native (Windows/macOS/Linux) — runs the demo (examples/shapes.rs)
+# Native (Windows/macOS/Linux) — runs the game (game/src/main.rs)
 cargo run
-cargo run --example shapes   # same demo, as a cargo example
 
 # Web (WASM) — one-time setup
 rustup target add wasm32-unknown-unknown
@@ -69,7 +68,7 @@ cargo test
 The web build compiles **both** the WebGPU and WebGL2 backends (for `wasm32` in
 `Cargo.toml`); wgpu uses **WebGPU when the browser supports it and falls back to
 WebGL2 otherwise** — no flags needed, just `trunk serve`. (Don't pass
-`--example` or `--features webgl`; those aren't valid here.) Open
+`--features webgl`; it isn't a valid flag here.) Open
 **http://127.0.0.1:8080** — the address is pinned in `Trunk.toml`; avoid the
 `localhost.` variant some browsers refuse.
 
@@ -77,11 +76,12 @@ WebGL2 otherwise** — no flags needed, just `trunk serve`. (Don't pass
 > (Ctrl/Cmd+Shift+R) or clear the site cache. `trunk serve` rebuilds `dist/`
 > fresh on each run.
 
-### Examples
+### Project layout
 
-Demos live in `examples/`. Run one with `cargo run --example <name>`. The web
-binary (`src/main.rs`) reuses `examples/shapes.rs` so the same demo runs on the
-web via Trunk.
+The repo is a Cargo workspace: `engine/` is the `juni` library crate and
+`game/` is the binary that depends on it (`game/src/main.rs`, with assets under
+`game/src/assets/`). The same `game` binary runs natively via `cargo run` and on
+the web via Trunk (`data-bin="game"` in `index.html`).
 
 ## Configuration
 

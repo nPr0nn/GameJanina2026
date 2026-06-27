@@ -1,14 +1,12 @@
-// Run natively:   cargo run   (or: cargo run --example shapes)
-// Run on the web: trunk serve --open                  (WebGPU)
-//                 trunk serve --features webgl --open (WebGL fallback)
+// Run natively: cargo run
+// Run on the web: trunk serve   (WebGPU, with WebGL2 fallback)
 
 use juni::prelude::*;
 
 // A custom fragment shader: an animated rainbow driven by world position and
 // `globals.time`. Same vertex/uniform interface as the built-in shape shader,
-// so it plugs straight into `begin_shader_mode`. Kept inline (not `include_str!`)
-// because this file is also `include!`d by src/main.rs, which would break a
-// relative shader path.
+// so it plugs straight into `begin_shader_mode`. Kept inline as a string here,
+// but it could equally live in its own .wgsl file loaded with `include_str!`.
 const RAINBOW_SHADER: &str = r#"
 struct Globals {
     proj: mat4x4<f32>,
@@ -51,6 +49,7 @@ struct Demo {
     mouse: Vec2D,
     rainbow: Shader,
     cow: Texture,
+    pop: Sound,
     spin: f32,
     zoom: f32,
 }
@@ -69,6 +68,10 @@ impl Game for Demo {
             // `cargo run`, `--example`, and the web build); the engine decodes
             // and uploads it
             cow: ctx.load_texture_from_memory(include_bytes!("assets/vaca.png")),
+
+            // Decode the WAV once up front (raylib's LoadSound). Played on right
+            // click in update().
+            pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
         }
@@ -77,6 +80,11 @@ impl Game for Demo {
     fn update(&mut self, ctx: &mut Context) {
         // Track the cursor in virtual-canvas coordinates.
         self.mouse = ctx.mouse_position();
+
+        // Play a pop on each right-click.
+        if ctx.is_mouse_button_pressed(MouseButton::Left) {
+            ctx.play_sound(&self.pop);
+        }
 
         // Press F to toggle fullscreen, Esc to quit.
         if ctx.is_key_pressed(Key::F) {
