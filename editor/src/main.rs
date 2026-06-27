@@ -597,18 +597,33 @@ impl Game for Editor {
             }
         }
 
-        // Z undo last, X clear all.
+        // Z undo last action on the active layer.
+        // On the sprite layer, sprite instances are tried first (they are
+        // placed last when a sprite is selected); shapes are the fallback.
         if ctx.is_key_pressed(Key::Z) {
-            let active_shapes = self.active_shapes_mut();
-            if active_shapes.pop().is_some() {
-                let count = active_shapes.len();
+            let undone = if self.active_layer == Layer::SpritePlanning
+                && !self.level.sprite_instances.is_empty()
+            {
+                self.level.sprite_instances.pop();
+                let count = self.level.sprite_instances.len();
+                self.status = format!("Undid last sprite ({count} left)");
+                true
+            } else {
+                let active_shapes = self.active_shapes_mut();
+                if active_shapes.pop().is_some() {
+                    let count = active_shapes.len();
+                    self.status = format!(
+                        "Undid last shape on {} ({count} left)",
+                        self.active_layer_name()
+                    );
+                    true
+                } else {
+                    false
+                }
+            };
+            if undone {
                 self.is_dirty = true;
                 self.refresh_window_title(ctx);
-                self.status = format!(
-                    "Undid last on {} ({} left)",
-                    self.active_layer_name(),
-                    count
-                );
             }
         }
         if ctx.is_key_pressed(Key::X) {
