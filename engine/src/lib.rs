@@ -51,7 +51,7 @@ pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
         run, Camera2D, Canvas, Config, Context, Game, Key, Level, MouseButton, Rect, Shader, Shape,
-        Sound, SpriteInstance, Texture, Vec2D,
+        Sound, SpriteInstance, Texture, Vec2D, Circle,
     };
 }
 
