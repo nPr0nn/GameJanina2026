@@ -2,12 +2,12 @@
 //! [`Game`](crate::Game) through its fixed-timestep lifecycle.
 
 use crate::audio::Audio;
-use crate::graphics::{create_graphics, Graphics, Rc};
-use crate::renderer::Renderer;
 use crate::canvas::Canvas;
+use crate::graphics::{create_graphics, Graphics, Rc};
+use crate::input::{Input, Key, MouseButton};
+use crate::renderer::Renderer;
 use crate::time::TimeStep;
 use crate::{Config, Context, Game};
-use crate::input::{Input, Key, MouseButton};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -60,7 +60,7 @@ impl<G: Game> ApplicationHandler<Graphics> for App<G> {
                 {
                     win_attr = win_attr
                         .with_title(self.config.title.clone())
-                        .with_inner_size(winit::dpi::PhysicalSize::new(
+                        .with_inner_size(winit::dpi::LogicalSize::new(
                             self.config.width,
                             self.config.height,
                         ))
@@ -77,12 +77,13 @@ impl<G: Game> ApplicationHandler<Graphics> for App<G> {
                         if let Some(monitor) = event_loop.primary_monitor() {
                             let screen = monitor.size();
                             let origin = monitor.position();
-                            let x = origin.x
-                                + (screen.width.saturating_sub(self.config.width) / 2) as i32;
-                            let y = origin.y
-                                + (screen.height.saturating_sub(self.config.height) / 2) as i32;
-                            win_attr = win_attr
-                                .with_position(winit::dpi::PhysicalPosition::new(x, y));
+                            let scale = monitor.scale_factor();
+                            let phys_w = (self.config.width as f64 * scale) as u32;
+                            let phys_h = (self.config.height as f64 * scale) as u32;
+                            let x = origin.x + (screen.width.saturating_sub(phys_w) / 2) as i32;
+                            let y = origin.y + (screen.height.saturating_sub(phys_h) / 2) as i32;
+                            win_attr =
+                                win_attr.with_position(winit::dpi::PhysicalPosition::new(x, y));
                         }
                     }
                 }
