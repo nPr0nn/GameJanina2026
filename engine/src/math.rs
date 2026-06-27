@@ -40,3 +40,26 @@ impl Rect {
     }
 
 }
+
+
+pub struct Circle {
+    pub center: Vec2D,
+    pub radius: f32,
+}
+
+impl Circle {
+    pub fn new(center: Vec2D, radius: f32) -> Self {
+        Self { center, radius }
+    }
+
+    pub fn intersects(&self, other: &Circle) -> bool {
+        let distance_squared = (self.center - other.center).length_squared();
+        let radius_sum = self.radius + other.radius;
+        distance_squared < (radius_sum * radius_sum)
+    }
+
+    pub fn intersects_point(&self, point: Vec2D) -> bool {
+        let distance_squared = (self.center - point).length_squared();
+        distance_squared < (self.radius * self.radius)
+    }
+}

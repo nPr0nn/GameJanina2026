@@ -42,7 +42,7 @@ pub use canvas::Canvas;
 pub use color::*;
 pub use input::{Key, MouseButton};
 pub use level::{Level, Shape};
-pub use math::{Rect, Vec2D};
+pub use math::{Rect, Vec2D, Circle};
 pub use renderer::{Shader, Texture};
 
 /// Common imports for using `juni`. `use juni::prelude::*;` brings the engine
@@ -51,7 +51,7 @@ pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
         run, Camera2D, Canvas, Config, Context, Game, Key, Level, MouseButton, Rect, Shader, Shape,
-        Sound, Texture, Vec2D,
+        Sound, Texture, Vec2D, Circle,
     };
 }
 

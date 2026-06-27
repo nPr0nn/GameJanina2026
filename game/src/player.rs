@@ -7,10 +7,10 @@ pub struct Player {
     cow: Texture,
     portal_activated: bool,
     both_portal_activated: bool,
-    portal_in: Vec2D,
-    portal_out: Vec2D,
+    portal_in: Circle,
+    portal_out: Circle,
     last_portal_ativated_in: bool,
-    portal_shape: Vec2D,
+    can_teleportate: bool,
 }
 
 impl Player {
@@ -23,10 +23,9 @@ impl Player {
             portal_activated: false,
             both_portal_activated: false,
             last_portal_ativated_in: false,
-            portal_in: Vec2D::ZERO,
-            portal_out: Vec2D::ZERO,
-            portal_shape: Vec2D::new(100.0, 100.0), // Define o tamanho do portal
-
+            portal_in: Circle::new(Vec2D::ZERO, 50.0),
+            portal_out: Circle::new(Vec2D::ZERO, 50.0),
+            can_teleportate: true,
         }
     }
 
@@ -49,12 +48,10 @@ impl Player {
             self.portal_activated = true;
             if self.last_portal_ativated_in {
                 self.last_portal_ativated_in = false;
-                self.portal_out = self.pos.clone();
+                self.portal_out.center = self.pos.clone() + Vec2D::new(self.shape.x / 2.0, self.shape.y / 2.0); // Offset the second portal to the right
                 self.both_portal_activated = true;
-                println!("Portal deactivated at position: {:?}", self.portal_out);
             } else {
-                self.portal_in = self.pos.clone();
-                println!("Portal activated at position: {:?}", self.portal_in);
+                self.portal_in.center = self.pos.clone() + Vec2D::new(self.shape.x / 2.0, self.shape.y / 2.0); // Offset the first portal to the right
                 self.last_portal_ativated_in = true;
             }
         }
@@ -63,8 +60,15 @@ impl Player {
             self.pos += dir * self.player_speed * ctx.dt;
         }
 
+        
         if let Some(new_pos) = self.detect_portal_collision() {
-            self.pos = new_pos;
+            if self.can_teleportate {
+                self.can_teleportate = false; // Set the teleportation flag when colliding with portals
+                self.pos = new_pos - Vec2D::new(self.shape.x / 2.0, self.shape.y / 2.0); // Offset the player to the left after teleportation
+            }
+        }
+        else {
+            self.can_teleportate = true; // Reset the teleportation flag when not colliding with portals
         }
     }
 
@@ -72,8 +76,11 @@ impl Player {
         // Draw the player as a simple circle.
         if self.portal_activated {
             // circle
-            canvas.circle(Vec2D::new(self.portal_in.x + self.portal_shape.x / 2.0, self.portal_in.y + self.portal_shape.y / 2.0), self.portal_shape.x / 2.0, BLUE);
-            canvas.circle(Vec2D::new(self.portal_out.x + self.portal_shape.x / 2.0, self.portal_out.y + self.portal_shape.y / 2.0), self.portal_shape.x / 2.0, ORANGE);
+            canvas.circle(self.portal_in.center, self.portal_in.radius, PURPLE);
+        }
+        if self.both_portal_activated {
+            // circle
+            canvas.circle(self.portal_out.center, self.portal_out.radius, PURPLE);
         }
             
         // canvas.rectangle(self.pos.x, self.pos.y, self.shape.x, self.shape.y, BLACK);
@@ -82,15 +89,10 @@ impl Player {
 
     fn detect_portal_collision(&self) -> Option<Vec2D> {
         if self.portal_activated && self.both_portal_activated {
-            let player_rect = Rect::new(self.pos.x, self.pos.y, self.shape.x, self.shape.y);
-            
-            let portal_in_rect = Rect::new(self.portal_in.x, self.portal_in.y, self.portal_shape.x, self.portal_shape.y);
-            let portal_out_rect = Rect::new(self.portal_out.x, self.portal_out.y, self.portal_shape.x, self.portal_shape.y);
-
-            if player_rect.intersects(&portal_in_rect) {
-                return Some(self.portal_out);
-            } else if player_rect.intersects(&portal_out_rect) {
-                return Some(self.portal_in);
+            if self.portal_in.intersects_point(self.pos+Vec2D::new(self.shape.x / 2.0, self.shape.y / 2.0))  {
+                return Some(self.portal_out.center);
+            } else if self.portal_out.intersects_point(self.pos+Vec2D::new(self.shape.x / 2.0, self.shape.y / 2.0)){
+                return Some(self.portal_in.center);
             }
         }
         None
