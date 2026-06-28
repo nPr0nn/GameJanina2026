@@ -158,11 +158,20 @@ impl Chain {
         (actual / self.max_length()).clamp(0.0, 1.0)
     }
 
-    /// Iterator over every joint position from the fixed anchor to the player
-    /// end.  Used by squeeze detection to measure how the chain path winds
-    /// around an object.
-    pub fn positions(&self) -> impl Iterator<Item = Vec2D> + '_ {
-        self.joints.iter().map(|j| j.pos)
+    /// Each joint's position together with how stretched its most-stretched
+    /// neighbour segment is, as a ratio of [`segment_length`](Self::segment_length).
+    pub fn joint_stretches(&self) -> impl Iterator<Item = (Vec2D, f32)> + '_ {
+        let sl = self.segment_length;
+        self.joints.iter().enumerate().map(move |(i, j)| {
+            let mut max_ratio = 0.0f32;
+            if i > 0 {
+                max_ratio = max_ratio.max(j.pos.distance(self.joints[i - 1].pos) / sl);
+            }
+            if i + 1 < self.joints.len() {
+                max_ratio = max_ratio.max(j.pos.distance(self.joints[i + 1].pos) / sl);
+            }
+            (j.pos, max_ratio)
+        })
     }
 
     /// Returns the tether point and maximum reach for the player this frame.
