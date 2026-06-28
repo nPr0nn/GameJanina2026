@@ -70,6 +70,7 @@ impl Loc {
 
     // Title screen
     pub fn game_title(&self) -> &str { self.get("game_title") }
+    pub fn title_prompt(&self) -> &str { self.get("title_prompt") }
     pub fn play(&self) -> &str { self.get("play") }
     pub fn config(&self) -> &str { self.get("config") }
     pub fn instructions(&self) -> &str { self.get("instructions") }

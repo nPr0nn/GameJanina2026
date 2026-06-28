@@ -44,14 +44,15 @@ pub use input::{Key, MouseButton};
 pub use level::{ClassificationEntry, Level, Shape, SpawnPoint, SpriteInstance};
 pub use math::{Circle, Rect, Vec2D};
 pub use renderer::{Shader, Texture};
+pub use time::time_seed;
 
 /// Common imports for using `juni`. `use juni::prelude::*;` brings the engine
 /// entry points, core types, the [`Color`] palette, and input enums into scope.
 pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
-        run, Camera2D, Canvas, Circle, ClassificationEntry, Config, Context, Game, Key, Level,
-        MouseButton, Rect, Shader, Shape, Sound, SpawnPoint, SpriteInstance, Texture, Vec2D,
+        run, time_seed, Camera2D, Canvas, Circle, ClassificationEntry, Config, Context, Game, Key,
+        Level, MouseButton, Rect, Shader, Shape, Sound, SpawnPoint, SpriteInstance, Texture, Vec2D,
     };
 }
 

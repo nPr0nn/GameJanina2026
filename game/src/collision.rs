@@ -226,13 +226,26 @@ fn sweep_aabb_circle(
 /// obstacle shape only requires extending these two methods — every consumer
 /// (chain joints, squeeze detection) works through `Collider` and needs no
 /// changes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Collider {
     Aabb(Rect),
     Circle { center: Vec2D, radius: f32 },
 }
 
 impl Collider {
+    /// Tight axis-aligned bounding box of this collider.
+    pub fn bounds(&self) -> Rect {
+        match *self {
+            Collider::Aabb(r) => r,
+            Collider::Circle { center, radius } => Rect::new(
+                center.x - radius,
+                center.y - radius,
+                radius * 2.0,
+                radius * 2.0,
+            ),
+        }
+    }
+
     /// Swept **box** query: sweep an AABB (top-left `pos`, dimensions `size`)
     /// along `vel` against this shape. Returns first-contact time `t ∈ [0,1]`
     /// and a contact normal (orientation unspecified — used only for sliding).
@@ -259,6 +272,193 @@ impl Collider {
         match *self {
             Collider::Aabb(rect) => push_point_out_of_aabb(pos, rect),
             Collider::Circle { center, radius } => push_point_out_of_circle(pos, center, radius),
+        }
+    }
+}
+
+// ── Spatial index (quad tree) for broad-phase chain-world collision ─────────
+
+/// Maximum recursion depth for the quad tree. Deeper trees cost more traversal
+/// and allocation; shallower ones reject less empty space.
+const QT_MAX_DEPTH: usize = 8;
+/// Maximum item count before a leaf node is split into four children.
+const QT_MAX_ITEMS: usize = 8;
+
+#[derive(Clone, Debug)]
+enum QtNode {
+    Leaf { bounds: Rect, items: Vec<usize> },
+    Branch { bounds: Rect, children: [Box<QtNode>; 4] },
+}
+
+impl QtNode {
+    fn new_leaf(bounds: Rect) -> Self {
+        QtNode::Leaf {
+            bounds,
+            items: Vec::new(),
+        }
+    }
+}
+
+/// A quad tree spatial index over a snapshot of [`Collider`]s.
+///
+/// Built once per frame from the current world colliders and queried by the
+/// chain solver to narrow each swept point test to only nearby obstacles.
+/// Colliders are owned as a cheap `Copy` snapshot so the tree has no lifetime
+/// ties to the original slice.
+#[derive(Debug)]
+pub struct ColliderTree {
+    root: QtNode,
+    colliders: Vec<Collider>,
+    /// Per-collider tag used to suppress duplicates when a collider's bounds
+    /// intersect several leaves that all overlap a single query region.
+    last_query: Vec<u32>,
+    /// Incremented each time [`query`](Self::query) is called.
+    next_query_id: u32,
+}
+
+impl ColliderTree {
+    /// Build a tree from a slice of colliders. Empty slices produce an empty
+    /// tree with a 1×1 placeholder bounds.
+    pub fn new(colliders: &[Collider]) -> Self {
+        let colliders: Vec<Collider> = colliders.to_vec();
+        let bounds = if colliders.is_empty() {
+            Rect::new(0.0, 0.0, 1.0, 1.0)
+        } else {
+            let mut min_x = f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
+            for c in &colliders {
+                let b = c.bounds();
+                min_x = min_x.min(b.x);
+                min_y = min_y.min(b.y);
+                max_x = max_x.max(b.x + b.width);
+                max_y = max_y.max(b.y + b.height);
+            }
+            Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+        };
+
+        let mut root = QtNode::new_leaf(bounds);
+        for i in 0..colliders.len() {
+            Self::insert(&mut root, &colliders, i, 0);
+        }
+        let last_query = vec![0u32; colliders.len()];
+        Self {
+            root,
+            colliders,
+            last_query,
+            next_query_id: 0,
+        }
+    }
+
+    /// Returns true if the tree contains no colliders.
+    pub fn is_empty(&self) -> bool {
+        self.colliders.is_empty()
+    }
+
+    /// Append every collider whose bounds intersect `area` to `out`.
+    /// `out` is not cleared first — callers can reuse one buffer.
+    /// Colliders that live in multiple leaves are returned only once.
+    pub fn query(&mut self, area: Rect, out: &mut Vec<Collider>) {
+        self.next_query_id += 1;
+        if self.next_query_id == 0 {
+            // Wraparound: reset all tags and start again at 1 (0 means unused).
+            self.last_query.fill(0);
+            self.next_query_id = 1;
+        }
+        let id = self.next_query_id;
+        Self::query_node(
+            &self.root,
+            &self.colliders,
+            area,
+            out,
+            id,
+            &mut self.last_query,
+        );
+    }
+
+    fn insert(node: &mut QtNode, colliders: &[Collider], idx: usize, depth: usize) {
+        match node {
+            QtNode::Leaf { bounds, items } => {
+                if items.len() < QT_MAX_ITEMS || depth >= QT_MAX_DEPTH {
+                    items.push(idx);
+                    return;
+                }
+
+                // Split the leaf into four quadrants and redistribute items.
+                let half_w = bounds.width * 0.5;
+                let half_h = bounds.height * 0.5;
+                let bx = bounds.x;
+                let by = bounds.y;
+                let mut children: [Box<QtNode>; 4] = [
+                    Box::new(QtNode::new_leaf(Rect::new(bx, by, half_w, half_h))),
+                    Box::new(QtNode::new_leaf(Rect::new(bx + half_w, by, half_w, half_h))),
+                    Box::new(QtNode::new_leaf(Rect::new(bx, by + half_h, half_w, half_h))),
+                    Box::new(QtNode::new_leaf(Rect::new(bx + half_w, by + half_h, half_w, half_h))),
+                ];
+
+                let old_items = std::mem::take(items);
+                for &old_idx in &old_items {
+                    Self::insert_into_children(&mut children, colliders, old_idx, depth + 1);
+                }
+                Self::insert_into_children(&mut children, colliders, idx, depth + 1);
+                *node = QtNode::Branch { bounds: *bounds, children };
+            }
+            QtNode::Branch { children, .. } => {
+                Self::insert_into_children(children, colliders, idx, depth + 1);
+            }
+        }
+    }
+
+    fn insert_into_children(
+        children: &mut [Box<QtNode>; 4],
+        colliders: &[Collider],
+        idx: usize,
+        depth: usize,
+    ) {
+        let b = colliders[idx].bounds();
+        for child in children.iter_mut() {
+            let cb = match child.as_ref() {
+                QtNode::Leaf { bounds, .. } | QtNode::Branch { bounds, .. } => *bounds,
+            };
+            if b.intersects(&cb) {
+                Self::insert(child, colliders, idx, depth);
+            }
+        }
+    }
+
+    fn query_node(
+        node: &QtNode,
+        colliders: &[Collider],
+        area: Rect,
+        out: &mut Vec<Collider>,
+        query_id: u32,
+        last_query: &mut [u32],
+    ) {
+        match node {
+            QtNode::Leaf { bounds, items } => {
+                if !area.intersects(bounds) {
+                    return;
+                }
+                for &idx in items {
+                    if last_query[idx] == query_id {
+                        continue; // already emitted this query
+                    }
+                    last_query[idx] = query_id;
+                    let c = colliders[idx];
+                    if c.bounds().intersects(&area) {
+                        out.push(c);
+                    }
+                }
+            }
+            QtNode::Branch { bounds, children } => {
+                if !area.intersects(bounds) {
+                    return;
+                }
+                for child in children.iter() {
+                    Self::query_node(child, colliders, area, out, query_id, last_query);
+                }
+            }
         }
     }
 }
@@ -308,7 +508,89 @@ fn sweep_point_circle(pos: Vec2D, vel: Vec2D, center: Vec2D, radius: f32) -> Opt
 /// move.  Provided `from` is outside every collider, `final_pos` is guaranteed
 /// to be outside every collider as well — this is the invariant the chain
 /// solver relies on to make joint teleporting impossible.
-pub fn move_point_swept(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2D, bool) {
+///
+/// `static_tree` is the pre-built index of immovable world geometry;
+/// `dynamics` are the few moving objects (boxes, squeezables) scanned linearly.
+/// `scratch` is a reusable buffer for the broad-phase query results; it is
+/// cleared on entry.
+pub fn move_point_swept(
+    from: Vec2D,
+    to: Vec2D,
+    static_tree: &mut ColliderTree,
+    dynamics: &[Collider],
+    scratch: &mut Vec<Collider>,
+) -> (Vec2D, bool) {
+    const SKIN: f32 = 0.02; // keep the point a hair outside the surface
+    let mut pos = from;
+    let mut vel = to - from;
+    let mut hit = false;
+
+    for _ in 0..3 {
+        if vel.length_squared() < 1e-10 {
+            break;
+        }
+
+        // Broad phase: only colliders whose bounds overlap the remaining
+        // swept segment. Re-query each iteration because sliding can redirect
+        // the path into a different neighbourhood.
+        scratch.clear();
+        static_tree.query(segment_bounds(pos, pos + vel), scratch);
+
+        let mut t_min = 1.0f32;
+        let mut normal = Vec2D::ZERO;
+        for c in scratch.iter().chain(dynamics.iter()) {
+            if let Some((t, n)) = c.sweep_point(pos, vel) {
+                if t < t_min {
+                    t_min = t;
+                    normal = n;
+                }
+            }
+        }
+        pos += vel * t_min;
+        if t_min < 1.0 {
+            hit = true;
+            pos += normal * SKIN; // nudge clear of the surface
+            // Slide: drop the velocity component into the surface.
+            let remaining = vel * (1.0 - t_min);
+            vel = remaining - normal * remaining.dot(normal);
+        } else {
+            break;
+        }
+    }
+    (pos, hit)
+}
+
+/// Un-stick a point from every nearby collider (static push-out).
+///
+/// `static_tree` is the pre-built index of immovable world geometry;
+/// `dynamics` are the few moving objects scanned linearly.
+/// `scratch` is a reusable buffer for the broad-phase query results; it is
+/// cleared on entry.
+pub fn push_point_out_of_all(
+    mut pos: Vec2D,
+    static_tree: &mut ColliderTree,
+    dynamics: &[Collider],
+    scratch: &mut Vec<Collider>,
+) -> Vec2D {
+    // Broad phase: only colliders whose bounds contain (or nearly contain) `pos`.
+    scratch.clear();
+    static_tree.query(point_query_bounds(pos), scratch);
+
+    for c in scratch.iter().chain(dynamics.iter()) {
+        if let Some((p, _)) = c.push_point(pos) {
+            pos = p;
+        }
+    }
+    pos
+}
+
+/// Swept point against a **pre-gathered** candidate slice (no broad-phase
+/// query). Same contract as [`move_point_swept`]: stops at the first surface and
+/// slides the remainder along it (up to 3 surfaces), returning `(final_pos,
+/// hit)`. The chain solver gathers the active snippet's candidates once per
+/// frame (see `Chain::frame_obstacles`) and reuses them across every constraint
+/// iteration, so this version skips the per-call tree traversal entirely.
+pub fn move_point_swept_in(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2D, bool) {
     const SKIN: f32 = 0.02; // keep the point a hair outside the surface
     let mut pos = from;
     let mut vel = to - from;
@@ -331,8 +613,7 @@ pub fn move_point_swept(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2
         pos += vel * t_min;
         if t_min < 1.0 {
             hit = true;
-            pos += normal * SKIN; // nudge clear of the surface
-            // Slide: drop the velocity component into the surface.
+            pos += normal * SKIN;
             let remaining = vel * (1.0 - t_min);
             vel = remaining - normal * remaining.dot(normal);
         } else {
@@ -342,14 +623,32 @@ pub fn move_point_swept(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2
     (pos, hit)
 }
 
-/// Un-stick a point from every collider in `colliders` (static push-out).
-pub fn push_point_out_of_all(mut pos: Vec2D, colliders: &[Collider]) -> Vec2D {
+/// Static push-out of a point against a pre-gathered candidate slice (the
+/// no-query counterpart of [`push_point_out_of_all`]).
+pub fn push_point_out_of_slice(mut pos: Vec2D, colliders: &[Collider]) -> Vec2D {
     for c in colliders {
         if let Some((p, _)) = c.push_point(pos) {
             pos = p;
         }
     }
     pos
+}
+
+/// Tight bounds of the segment `a → b`.
+fn segment_bounds(a: Vec2D, b: Vec2D) -> Rect {
+    let min_x = a.x.min(b.x);
+    let min_y = a.y.min(b.y);
+    let max_x = a.x.max(b.x);
+    let max_y = a.y.max(b.y);
+    Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+}
+
+/// Tiny bounds around a point so that any collider containing the point is
+/// returned by the broad-phase query. A zero-area rect would fail the strict
+/// `Rect::intersects` test for boundary contacts.
+fn point_query_bounds(p: Vec2D) -> Rect {
+    const EPS: f32 = 0.001;
+    Rect::new(p.x - EPS, p.y - EPS, EPS * 2.0, EPS * 2.0)
 }
 
 // ── Static push-out (for constraint corrections, not velocity movement) ─────
@@ -505,5 +804,65 @@ mod tests {
         let hit = sweep_point_aabb(Vec2D::new(5.0, -4.0), Vec2D::new(0.0, 8.0), stat);
         let (t, _) = hit.expect("vertical entry should hit");
         assert!(t.is_finite() && (0.0..=1.0).contains(&t));
+    }
+
+    // Quad tree: only colliders overlapping the query area are returned.
+    #[test]
+    fn tree_query_filters_by_area() {
+        let colliders = vec![
+            Collider::Aabb(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Collider::Aabb(Rect::new(100.0, 100.0, 10.0, 10.0)),
+        ];
+        let mut tree = ColliderTree::new(&colliders);
+        let mut out = Vec::new();
+        tree.query(Rect::new(-5.0, -5.0, 20.0, 20.0), &mut out);
+        assert_eq!(out.len(), 1, "expected only the first collider");
+        assert_eq!(out[0], colliders[0]);
+    }
+
+    // Quad tree: a collider straddling a split boundary is returned once.
+    #[test]
+    fn tree_query_does_not_duplicate_straddling_colliders() {
+        // A big collider forces the root bounds, a small one sits at the centre
+        // and therefore lives in all four children after the first split.
+        let colliders = vec![
+            Collider::Aabb(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Collider::Aabb(Rect::new(48.0, 48.0, 4.0, 4.0)),
+        ];
+        let mut tree = ColliderTree::new(&colliders);
+        let mut out = Vec::new();
+        tree.query(Rect::new(40.0, 40.0, 20.0, 20.0), &mut out);
+        assert_eq!(out.len(), 2, "expected both colliders, not duplicates");
+    }
+
+    // Quad tree: move_point_swept produces the same result via the tree as the
+    // old full-scan did for a simple scenario.
+    #[test]
+    fn tree_swept_point_matches_full_scan() {
+        let colliders = vec![
+            Collider::Aabb(Rect::new(10.0, -10.0, 10.0, 20.0)), // vertical wall
+        ];
+        let mut tree = ColliderTree::new(&colliders);
+        let mut scratch = Vec::new();
+        let (pos, hit) = move_point_swept(Vec2D::ZERO, Vec2D::new(30.0, 0.0), &mut tree, &[], &mut scratch);
+        assert!(hit, "should hit the wall");
+        assert!(
+            pos.x < 10.0 && pos.x > 9.0,
+            "expected to stop just before the wall, got {pos:?}"
+        );
+    }
+
+    // Dynamics are scanned linearly and still block movement.
+    #[test]
+    fn swept_point_hits_dynamic_collider() {
+        let mut tree = ColliderTree::new(&[]);
+        let dynamics = vec![Collider::Aabb(Rect::new(10.0, -10.0, 10.0, 20.0))];
+        let mut scratch = Vec::new();
+        let (pos, hit) = move_point_swept(Vec2D::ZERO, Vec2D::new(30.0, 0.0), &mut tree, &dynamics, &mut scratch);
+        assert!(hit, "should hit the dynamic collider");
+        assert!(
+            pos.x < 10.0 && pos.x > 9.0,
+            "expected to stop just before the dynamic wall, got {pos:?}"
+        );
     }
 }

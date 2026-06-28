@@ -10,6 +10,8 @@ mod animation;
 mod collision;
 mod player;
 mod chain;
+mod portal;
+mod portal_chain;
 mod squeezable;
 mod gameplay;
 mod transition;
@@ -60,10 +62,8 @@ struct Ui {
     win_title: Centered,
     win_prompt: Centered,
     sub_back: Centered,
-    config_title: Centered,
     instructions_title: Centered,
     credits_title: Centered,
-    config_options: Vec<Centered>,
     instructions_lines: Vec<Centered>,
     credits_lines: Vec<Centered>,
 }
@@ -86,8 +86,6 @@ impl Ui {
             "Lucas Nogueira",
             "Nícolas Hecker",
         ];
-        let config_texts = [loc.fullscreen_key(), loc.zoom_key(), loc.config_placeholder()];
-
         Self {
             pause_title: Centered::new(ctx, loc.paused(), 90.0, 250.0),
             pause_prompt: Centered::new(ctx, loc.pause_prompt(), 32.0, 380.0),
@@ -96,14 +94,8 @@ impl Ui {
             win_title: Centered::new(ctx, loc.win(), 100.0, 230.0),
             win_prompt: Centered::new(ctx, loc.play_again_prompt(), 32.0, 380.0),
             sub_back: Centered::new(ctx, loc.back_hint(), 24.0, RENDER_H - 70.0),
-            config_title: Centered::new(ctx, loc.config_title(), 72.0, 100.0),
             instructions_title: Centered::new(ctx, loc.instructions_title(), 72.0, 100.0),
             credits_title: Centered::new(ctx, loc.credits_title(), 72.0, 100.0),
-            config_options: config_texts
-                .iter()
-                .enumerate()
-                .map(|(i, text)| Centered::new(ctx, text, if i == 2 { 26.0 } else { 32.0 }, 200.0 + i as f32 * 60.0))
-                .collect(),
             instructions_lines: instructions_texts
                 .iter()
                 .enumerate()
@@ -156,7 +148,7 @@ impl Game for App {
     fn init(ctx: &mut Context) -> Self {
         let loc = Loc::new(Lang::English);
         Self {
-            screen: Screen::Gameplay,
+            screen: Screen::Menu,
             transition: Transition::new(),
             gameplay: Gameplay::new(ctx, loc),
             menu: Menu::new(ctx, loc),
@@ -194,7 +186,6 @@ impl Game for App {
                 if let Some(action) = self.menu.update(ctx) {
                     match action {
                         MenuAction::Play => self.go(Screen::Gameplay),
-                        MenuAction::Config => self.go(Screen::Config),
                         MenuAction::Instructions => self.go(Screen::Instructions),
                         MenuAction::Credits => self.go(Screen::Credits),
                         MenuAction::Quit => ctx.exit(),
@@ -203,11 +194,6 @@ impl Game for App {
                             self.rebuild_ui(ctx);
                         }
                     }
-                }
-            }
-            Screen::Config => {
-                if ctx.is_key_pressed(Key::Escape) || ctx.is_key_pressed(Key::Backspace) {
-                    self.go(Screen::Menu);
                 }
             }
             Screen::Instructions => {
@@ -251,12 +237,6 @@ impl Game for App {
         match self.screen {
             Screen::Menu => {
                 self.menu.draw(canvas, self.loc);
-            }
-            Screen::Config => {
-                self.ui.draw_sub_screen(canvas, &self.ui.config_title);
-                for option in &self.ui.config_options {
-                    option.draw(canvas, LIGHTGRAY);
-                }
             }
             Screen::Instructions => {
                 self.ui.draw_sub_screen(canvas, &self.ui.instructions_title);
@@ -311,6 +291,7 @@ fn draw_gradient_background(canvas: &mut Canvas) {
     const STRIPS: i32 = 24;
     const BG_TOP: Color = Color::new(16, 22, 42, 255);
     const BG_BOTTOM: Color = Color::new(10, 14, 28, 255);
+    const GLOW: Color = Color::new(28, 38, 72, 255);
     let strip_h = RENDER_H / STRIPS as f32;
     for i in 0..STRIPS {
         let t = i as f32 / (STRIPS - 1) as f32;
@@ -318,6 +299,39 @@ fn draw_gradient_background(canvas: &mut Canvas) {
         let g = (BG_TOP.g as f32 + (BG_BOTTOM.g as f32 - BG_TOP.g as f32) * t) as u8;
         let b = (BG_TOP.b as f32 + (BG_BOTTOM.b as f32 - BG_TOP.b as f32) * t) as u8;
         canvas.rectangle(0.0, i as f32 * strip_h, RENDER_W, strip_h + 1.0, Color::new(r, g, b, 255));
+    }
+
+    // Soft horizontal glow band behind the title area.
+    let band_y = 80.0;
+    let band_h = 140.0;
+    canvas.quad_gradient(
+        Vec2D::new(0.0, band_y),
+        Vec2D::new(RENDER_W, band_y),
+        Vec2D::new(RENDER_W, band_y + band_h),
+        Vec2D::new(0.0, band_y + band_h),
+        Color::new(0, 0, 0, 0),
+        Color::new(0, 0, 0, 0),
+        GLOW.with_alpha(0.22),
+        GLOW.with_alpha(0.22),
+    );
+
+    draw_decorative_stars(canvas);
+}
+
+fn draw_decorative_stars(canvas: &mut Canvas) {
+    const STAR: Color = Color::new(180, 188, 230, 55);
+    let stars: &[(f32, f32, f32)] = &[
+        (45.0, 28.0, 2.0), (118.0, 75.0, 1.0), (198.0, 18.0, 2.0), (305.0, 95.0, 1.0),
+        (448.0, 42.0, 1.0), (602.0, 12.0, 2.0), (718.0, 66.0, 1.0), (852.0, 28.0, 2.0),
+        (948.0, 88.0, 1.0), (1052.0, 18.0, 2.0), (1148.0, 52.0, 1.0), (1218.0, 78.0, 2.0),
+        (78.0, 148.0, 1.0), (182.0, 168.0, 2.0), (342.0, 138.0, 1.0), (505.0, 158.0, 1.0),
+        (698.0, 128.0, 2.0), (902.0, 152.0, 1.0), (1102.0, 142.0, 2.0),
+        (58.0, 598.0, 1.0), (202.0, 638.0, 2.0), (402.0, 608.0, 1.0), (602.0, 658.0, 1.0),
+        (798.0, 598.0, 2.0), (1002.0, 638.0, 1.0), (1152.0, 602.0, 2.0),
+        (18.0, 340.0, 1.0), (1262.0, 282.0, 1.0), (1238.0, 402.0, 2.0),
+    ];
+    for &(x, y, s) in stars {
+        canvas.rectangle(x, y, s, s, STAR);
     }
 }
 
@@ -340,7 +354,7 @@ fn main() {
         // 4x MSAA looks crisp on native but is expensive on the web (WebGL2
         // resolves are bandwidth-heavy), so disable it there.
         msaa: if cfg!(target_arch = "wasm32") { 1 } else { 4 },
-        font_bytes: Some(include_bytes!("../assets/fonts/BlockyPixel.ttf")),
+        font_bytes: Some(include_bytes!("../assets/fonts/Superwide.ttf")),
         ..Config::default()
     });
 }

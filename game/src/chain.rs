@@ -1,6 +1,7 @@
 use juni::prelude::*;
 
-use crate::collision::{move_point_swept, push_point_out_of_all, Collider};
+use crate::animation::{Animation, SpriteSheet};
+use crate::collision::{move_point_swept_in, push_point_out_of_slice, Collider, ColliderTree};
 
 #[derive(Debug, Clone, Copy)]
 struct Joint {
@@ -59,9 +60,11 @@ pub struct Chain {
     /// `0.0` = always floppy; `1.0` = fully cable-straight when taut.
     pub straightness: f32,
     constraint_iterations: usize,
-    /// Draw each joint as a square in addition to the connecting lines.
-    pub show_debug: bool,
     color: Color,
+    /// Chain-link sprite sheet. Cloning is cheap (reference-counted texture).
+    sheet: SpriteSheet,
+    /// Sprite animation for the metallic link shimmer.
+    anim: Animation,
     /// Scratch buffer reused every frame to track which joints were moved by
     /// a distance constraint (avoids a heap allocation per update).
     was_constrained: Vec<bool>,
@@ -69,6 +72,23 @@ pub struct Chain {
     /// These skip the stiffness snap and the straightening pass so the snap
     /// cannot push them back through geometry.
     obstacle_constrained: Vec<bool>,
+    /// Per-joint obstacle candidates, gathered **once per frame** from a single
+    /// broad-phase query over each joint's local neighbourhood (its two
+    /// neighbours plus a margin), then reused by every swept correction for that
+    /// joint across all constraint iterations. This replaces a tree query per
+    /// joint *per iteration* — the dominant cost — while keeping each swept
+    /// scan tiny even for very long chains. Colliders are whole shapes and the
+    /// margin covers how far a joint can move while settling, so every shape a
+    /// joint can reach this frame is in its list (no-tunnelling preserved).
+    /// Indexed by joint; only internal joints (`1..n-1`) are populated. The inner
+    /// `Vec`s are reused frame-to-frame.
+    joint_obstacles: Vec<Vec<Collider>>,
+    /// Every obstacle near the *whole* chain this frame: gathered with a **single**
+    /// broad-phase query over the chain's bounding box (plus the dynamics). The
+    /// per-joint lists above are then a cheap linear filter of this set — so the
+    /// tree is queried once per chain, not once per joint. When it comes back
+    /// empty the chain is in open space and all collision work is skipped.
+    chain_obstacles: Vec<Collider>,
 }
 
 impl Chain {
@@ -80,7 +100,15 @@ impl Chain {
     /// * `link_size` — size of each virtual link; determines segment count and
     ///   is also used as the visual line thickness.
     /// * `color` — tint used when drawing.
-    pub fn new(start: Vec2D, end: Vec2D, total_length: f32, link_size: f32, color: Color) -> Self {
+    /// * `sheet` — chain-link sprite sheet (64×64 frames).
+    pub fn new(
+        start: Vec2D,
+        end: Vec2D,
+        total_length: f32,
+        link_size: f32,
+        color: Color,
+        sheet: SpriteSheet,
+    ) -> Self {
         assert!(total_length > 0.0, "chain total_length must be positive");
         assert!(link_size > 0.0, "chain link_size must be positive");
 
@@ -95,6 +123,7 @@ impl Chain {
         }
 
         let n = joints.len();
+        let anim = Animation::new(sheet.clone(), 0, 8.0, true);
         Self {
             joints,
             segment_length,
@@ -102,10 +131,80 @@ impl Chain {
             damping: 0.025,
             straightness: 0.7,
             constraint_iterations: 20,
-            show_debug: true,
             color,
+            sheet,
+            anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
+            joint_obstacles: Vec::new(),
+            chain_obstacles: Vec::new(),
+        }
+    }
+
+    /// Build a chain directly from an explicit polyline of joint positions.
+    ///
+    /// Used for **frozen snippets** created when a chain is split at a portal:
+    /// the captured points become the joints verbatim and the snippet is only
+    /// ever drawn and straightened (via [`set_joint_positions`]), never
+    /// simulated. `segment_length` should match the parent chain so the links
+    /// render at a consistent size.
+    pub fn from_points(
+        points: &[Vec2D],
+        segment_length: f32,
+        link_size: f32,
+        color: Color,
+        sheet: SpriteSheet,
+    ) -> Self {
+        assert!(points.len() >= 2, "a chain snippet needs at least two points");
+        let joints: Vec<Joint> = points
+            .iter()
+            .map(|&p| Joint { pos: p, old_pos: p })
+            .collect();
+        let n = joints.len();
+        let anim = Animation::new(sheet.clone(), 0, 8.0, true);
+        Self {
+            joints,
+            segment_length,
+            link_size,
+            damping: 0.025,
+            straightness: 0.7,
+            constraint_iterations: 20,
+            color,
+            sheet,
+            anim,
+            was_constrained: vec![false; n],
+            obstacle_constrained: vec![false; n],
+            joint_obstacles: Vec::new(),
+            chain_obstacles: Vec::new(),
+        }
+    }
+
+    /// The chain's per-segment rest length.
+    pub fn segment_length(&self) -> f32 {
+        self.segment_length
+    }
+
+    /// The current joint positions as a polyline, in anchor → player order.
+    pub fn path_points(&self) -> Vec<Vec2D> {
+        self.joints.iter().map(|j| j.pos).collect()
+    }
+
+    /// Current geometric path length (sum of the segment distances).
+    pub fn path_length(&self) -> f32 {
+        self.joints
+            .windows(2)
+            .map(|w| w[0].pos.distance(w[1].pos))
+            .sum()
+    }
+
+    /// Overwrite every joint position. Used to straighten a frozen snippet
+    /// toward taut as rope is pulled through a portal. `old_pos` is synced so
+    /// the snippet never carries Verlet velocity if it is later re-simulated.
+    pub fn set_joint_positions(&mut self, points: &[Vec2D]) {
+        debug_assert_eq!(points.len(), self.joints.len());
+        for (j, &p) in self.joints.iter_mut().zip(points) {
+            j.pos = p;
+            j.old_pos = p;
         }
     }
 
@@ -202,20 +301,104 @@ impl Chain {
         (self.joints[contact_idx].pos, free_length)
     }
 
+    /// Move joint `i` from `from` toward `to`, swept against its obstacle list —
+    /// or, when that list is empty (the joint is in open space this frame), a
+    /// plain move with no collision work at all. Returns `(new_pos, hit)`. This
+    /// is behaviour-identical to a swept move against an empty set, just without
+    /// the per-call overhead — which matters because most joints of a long chain
+    /// are nowhere near a collider even when part of the chain is.
+    fn joint_move(&self, i: usize, from: Vec2D, to: Vec2D) -> (Vec2D, bool) {
+        if self.joint_obstacles[i].is_empty() {
+            (to, false)
+        } else {
+            self.joint_move(i, from, to)
+        }
+    }
+
+    /// Axis-aligned bounding box of every joint, grown by `margin` on each side.
+    /// Used for the once-per-chain broad-phase query.
+    fn joints_bounds(&self, margin: f32) -> Rect {
+        let mut min = self.joints[0].pos;
+        let mut max = self.joints[0].pos;
+        for j in &self.joints {
+            min = min.min(j.pos);
+            max = max.max(j.pos);
+        }
+        Rect::new(
+            min.x - margin,
+            min.y - margin,
+            (max.x - min.x) + 2.0 * margin,
+            (max.y - min.y) + 2.0 * margin,
+        )
+    }
+
     /// Advance the simulation by `dt` seconds.
     ///
     /// Both anchors must be pinned via [`set_start`](Self::set_start) /
     /// [`set_end`](Self::set_end) **before** calling this.
     ///
-    /// `obstacles` is a slice of axis-aligned rectangles that chain joints
-    /// cannot pass through.  The collision pass runs interleaved with the
-    /// distance constraints so wrapping around corners converges naturally:
-    /// joints near a corner get pushed to different faces by successive
-    /// iterations, threading the chain around the obstacle automatically.
-    pub fn update(&mut self, dt: f32, obstacles: &[Collider]) {
+    /// `static_tree` indexes the immovable world geometry; `dynamics` are the
+    /// few moving obstacles (boxes, squeezables) scanned linearly. The collision
+    /// pass runs interleaved with the distance constraints so wrapping around
+    /// corners converges naturally: joints near a corner get pushed to different
+    /// faces by successive iterations, threading the chain around the obstacle
+    /// automatically.
+    pub fn update(&mut self, dt: f32, static_tree: &mut ColliderTree, dynamics: &[Collider]) {
         let n = self.joints.len();
         if n < 2 {
             return;
+        }
+
+        // Advance the metallic link shimmer.
+        self.anim.update(dt);
+
+        // ── Broad phase (space partition: one query per chain) ────────────────
+        //
+        // Query the quad-tree ONCE over the whole chain's bounding box for every
+        // static collider it could touch this frame, and append the dynamics.
+        // That single set (`chain_obstacles`) is then filtered per joint into its
+        // local neighbourhood with a cheap AABB test — so the tree is walked once
+        // per chain, not once per joint (the previous cost: thousands of tree
+        // queries per frame for a long chain).
+        //
+        // The margin covers how far a joint can move while the constraints settle
+        // (each correction only pulls it ≤ one segment toward a neighbour); since
+        // colliders are whole shapes, every shape a joint can reach is in its
+        // list — the no-tunnelling guarantee holds.
+        //
+        // Open-space fast path: if nothing is near the chain, every per-joint
+        // list is empty, the push-out/swept steps below all no-op, and the
+        // constraint solver runs as pure distance constraints — no collision work
+        // at all.
+        let margin = self.segment_length * 2.0 + 8.0;
+        let chain_bounds = self.joints_bounds(margin);
+        self.chain_obstacles.clear();
+        if !static_tree.is_empty() {
+            static_tree.query(chain_bounds, &mut self.chain_obstacles);
+        }
+        self.chain_obstacles.extend_from_slice(dynamics);
+
+        if self.joint_obstacles.len() < n {
+            self.joint_obstacles.resize_with(n, Vec::new);
+        }
+        for i in 1..n - 1 {
+            let bucket = &mut self.joint_obstacles[i];
+            bucket.clear();
+            // Skip the per-joint filter entirely when the chain is in open space.
+            if self.chain_obstacles.is_empty() {
+                continue;
+            }
+            let region = three_point_bounds(
+                self.joints[i - 1].pos,
+                self.joints[i].pos,
+                self.joints[i + 1].pos,
+                margin,
+            );
+            for c in &self.chain_obstacles {
+                if region.intersects(&c.bounds()) {
+                    bucket.push(*c);
+                }
+            }
         }
 
         // ── 0. Re-establish the "outside all obstacles" invariant ─────────────
@@ -227,7 +410,7 @@ impl Chain {
         // straight line crossed a block, so a one-time static push-out (nearest
         // face) is correct — it is not a gameplay teleport.
         for i in 1..n - 1 {
-            let unstuck = push_point_out_of_all(self.joints[i].pos, obstacles);
+            let unstuck = push_point_out_of_slice(self.joints[i].pos, &self.joint_obstacles[i]);
             if unstuck != self.joints[i].pos {
                 self.joints[i].pos = unstuck;
                 self.joints[i].old_pos = unstuck;
@@ -247,7 +430,7 @@ impl Chain {
                 let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
                 let target = self.joints[i].pos + vel;
                 self.joints[i].old_pos = self.joints[i].pos;
-                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles);
+                let (moved, _) = self.joint_move(i, self.joints[i].pos, target);
                 self.joints[i].pos = moved;
             }
         } else {
@@ -288,7 +471,12 @@ impl Chain {
         // joint to the far side of a block.  Wrapping around corners falls out
         // for free: a blocked joint slides along the face toward the corner over
         // successive iterations.
+        // Stop iterating once corrections are sub-pixel: further passes only
+        // shuffle joints by negligible amounts.
+        const CONSTRAINT_EPS_SQ: f32 = 0.0001; // 0.01 px squared
         for _ in 0..self.constraint_iterations {
+            let mut max_move_sq = 0.0f32;
+
             // Pass A: player end → anchor.
             for i in (1..n - 1).rev() {
                 let neighbour = self.joints[i + 1].pos;
@@ -297,8 +485,10 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    let old_pos = self.joints[i].pos;
+                    let (moved, hit) = self.joint_move(i, old_pos, target);
                     self.joints[i].pos = moved;
+                    max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -314,13 +504,19 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    let old_pos = self.joints[i].pos;
+                    let (moved, hit) = self.joint_move(i, old_pos, target);
                     self.joints[i].pos = moved;
+                    max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
                     if hit {
                         self.obstacle_constrained[i] = true;
                     }
                 }
+            }
+
+            if max_move_sq < CONSTRAINT_EPS_SQ {
+                break;
             }
         }
 
@@ -383,7 +579,7 @@ impl Chain {
                     let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
                     let current = self.joints[i].pos;
                     let target = current + (ideal - current) * strength;
-                    let (moved, hit) = move_point_swept(current, target, obstacles);
+                    let (moved, hit) = self.joint_move(i, current, target);
                     self.joints[i].pos = moved;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -401,6 +597,8 @@ impl Chain {
             // from one of its neighbours.  A short swept constraint pass resolves
             // those violations in-frame so they cannot feed back as wobble.
             for _ in 0..5 {
+                let mut max_move_sq = 0.0f32;
+
                 for i in (1..n - 1).rev() {
                     let neighbour = self.joints[i + 1].pos;
                     let delta = self.joints[i].pos - neighbour;
@@ -408,8 +606,10 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        let old_pos = self.joints[i].pos;
+                        let (moved, hit) = self.joint_move(i, old_pos, target);
                         self.joints[i].pos = moved;
+                        max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
                             self.obstacle_constrained[i] = true;
                         }
@@ -422,12 +622,18 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        let old_pos = self.joints[i].pos;
+                        let (moved, hit) = self.joint_move(i, old_pos, target);
                         self.joints[i].pos = moved;
+                        max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
                             self.obstacle_constrained[i] = true;
                         }
                     }
+                }
+
+                if max_move_sq < CONSTRAINT_EPS_SQ {
+                    break;
                 }
             }
 
@@ -440,29 +646,78 @@ impl Chain {
         }
     }
 
-    /// Draw the chain: thick lines between consecutive joints, and (when
-    /// [`show_debug`](Self::show_debug) is enabled) a square at each joint.
-    pub fn draw(&self, canvas: &mut Canvas) {
-        for i in 0..self.joints.len() - 1 {
-            canvas.line(
-                self.joints[i].pos,
-                self.joints[i + 1].pos,
-                self.link_size * 0.5,
-                self.color,
-            );
+    /// Draw the chain: a thin tinted line between joints plus a metallic link
+    /// sprite at each joint. The sprite frames are offset by joint index so the
+    /// metallic shimmer appears to travel along the chain.
+    ///
+    /// `alpha` scales the tint's opacity (`0.0`–`1.0`), used by the caller to
+    /// fade longer chains behind the shorter ones stacked on top.
+    pub fn draw(&self, canvas: &mut Canvas, alpha: f32) {
+        let n = self.joints.len();
+        if n < 2 {
+            return;
         }
 
-        if self.show_debug {
-            let half = self.link_size * 0.5;
-            for joint in &self.joints {
-                canvas.rectangle(
-                    joint.pos.x - half,
-                    joint.pos.y - half,
-                    self.link_size,
-                    self.link_size,
-                    self.color,
-                );
-            }
+        // Mix the chain colour with white so the metallic link keeps some of
+        // its base grey/silver look instead of becoming fully saturated.
+        let tint = mix_with_white(self.color, 0.35).with_alpha(alpha);
+
+        let frame_count = self.sheet.frame_count(0).max(1);
+        // Draw one link every few joints so the links are bigger and visibly
+        // separated from each other, while the physics simulation stays fine.
+        const DRAW_EVERY: usize = 2;
+        let scale = self.link_size * 3.0 / self.sheet.frame_width();
+        let half_dest = Vec2D::new(
+            self.sheet.frame_width() * scale * 0.5,
+            self.sheet.frame_height() * scale * 0.5,
+        );
+
+        let mut draw_index = 0usize;
+        let mut i = 0usize;
+        while i < n {
+            let joint = self.joints[i];
+            // Orient the link along the chain. Endpoints use their single
+            // neighbour; internal joints use the average of in/out directions.
+            let prev = if i == 0 { joint.pos } else { self.joints[i - 1].pos };
+            let next = if i == n - 1 { joint.pos } else { self.joints[i + 1].pos };
+            // `draw_texture_pro` takes rotation in degrees.
+            let rotation = (next - prev).to_angle().to_degrees();
+
+            // Offset the shimmer along the chain so adjacent drawn links show
+            // different frames and the effect travels as the animation advances.
+            let frame = (self.anim.current_frame() + draw_index) % frame_count;
+            let pos = joint.pos - half_dest;
+            self.sheet.draw_frame_rotated(
+                canvas,
+                frame as u32,
+                0,
+                pos,
+                scale,
+                rotation,
+                tint,
+            );
+
+            draw_index += 1;
+            i += DRAW_EVERY;
+        }
+
+        // Always draw the player-end link so the chain tip doesn't look empty.
+        let last = n - 1;
+        if last % DRAW_EVERY != 0 {
+            let joint = self.joints[last];
+            let prev = self.joints[last - 1].pos;
+            let rotation = (joint.pos - prev).to_angle().to_degrees();
+            let frame = (self.anim.current_frame() + draw_index) % frame_count;
+            let pos = joint.pos - half_dest;
+            self.sheet.draw_frame_rotated(
+                canvas,
+                frame as u32,
+                0,
+                pos,
+                scale,
+                rotation,
+                tint,
+            );
         }
     }
 
@@ -497,4 +752,23 @@ impl Chain {
             Rect::new(j.pos.x - half, j.pos.y - half, self.link_size, self.link_size)
         })
     }
+}
+
+/// Axis-aligned bounding box of three points, grown by `margin` on every side.
+/// Used to gather the colliders a joint and its two neighbours can reach.
+fn three_point_bounds(a: Vec2D, b: Vec2D, c: Vec2D, margin: f32) -> Rect {
+    let min = a.min(b).min(c) - Vec2D::splat(margin);
+    let max = a.max(b).max(c) + Vec2D::splat(margin);
+    Rect::new(min.x, min.y, max.x - min.x, max.y - min.y)
+}
+
+/// Blend `color` toward white by `amount` (`0.0` = unchanged, `1.0` = white).
+fn mix_with_white(color: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    Color::new(
+        (color.r as f32 * (1.0 - t) + 255.0 * t) as u8,
+        (color.g as f32 * (1.0 - t) + 255.0 * t) as u8,
+        (color.b as f32 * (1.0 - t) + 255.0 * t) as u8,
+        color.a,
+    )
 }
