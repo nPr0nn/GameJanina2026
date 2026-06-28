@@ -5,9 +5,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
+use crate::animation::SpriteSheet;
 use crate::chain::Chain;
 use crate::collision::{push_rect_out_of_aabb, push_rect_out_of_circle, resolve_swept, Collider};
 use crate::loc::Loc;
@@ -64,6 +64,12 @@ pub struct Gameplay {
     mouse: Vec2D,
     rainbow: Shader,
     cow: Texture,
+    /// The ducky sprite sheet that backs the player's animation. Kept here so a
+    /// `reset` can hand a fresh clone to a new `Player`.
+    ducky: SpriteSheet,
+    /// When `true`, the editor's collision layer is drawn on top of the level
+    /// (toggle with F3). Off by default — normal play shows only the sprites.
+    debug_collisions: bool,
     pop: Sound,
     spin: f32,
     zoom: f32,
@@ -93,9 +99,16 @@ pub struct Gameplay {
 impl Gameplay {
     pub fn new(ctx: &mut Context, loc: Loc) -> Self {
         let cow_texture = ctx.load_texture_from_memory(include_bytes!("../assets/sprites/vaca.png"));
+        // The ducky sheet is a 6×4 grid of 32×32 frames (row 0 idle, row 1 walk).
+        let ducky = SpriteSheet::from_memory(
+            ctx,
+            include_bytes!("../assets/ducky_spritesheet.png"),
+            32,
+            32,
+        );
         let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         let chain_anchor = Vec2D::new(640.0, 100.0);
-        let mut player = Player::new(cow_texture.clone());
+        let mut player = Player::new(ducky.clone());
         // Start close to the anchor so all chains begin with visible slack.
         player.pos = Vec2D::new(640.0, 150.0);
         // Three chains sharing the same anchor but with different lengths and tints.
@@ -128,6 +141,8 @@ impl Gameplay {
             mouse: Vec2D::ZERO,
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
             cow: cow_texture.clone(),
+            ducky,
+            debug_collisions: false,
             player,
             pop: ctx.load_sound_from_memory(include_bytes!("../assets/audio/bolha.wav")),
             spin: 0.0,
@@ -151,7 +166,7 @@ impl Gameplay {
     pub fn reset(&mut self) {
         self.x = 100.0;
         self.dir = 1.0;
-        self.player = Player::new(self.cow.clone());
+        self.player = Player::new(self.ducky.clone());
         self.player.pos = Vec2D::new(640.0, 150.0);
         self.chains = vec![
             Chain::new(self.chain_anchor, self.player.pos, 1600.0, 6.0, RED),
@@ -176,6 +191,11 @@ impl Gameplay {
     pub fn update(&mut self, ctx: &mut Context) {
         self.mouse = ctx.mouse_position();
         self.fps = ctx.fps;
+
+        // Toggle the collision-layer debug overlay.
+        if ctx.is_key_pressed(Key::F3) {
+            self.debug_collisions = !self.debug_collisions;
+        }
 
         // Play a pop on each left-click.
         if ctx.is_mouse_button_pressed(MouseButton::Left) {
@@ -344,7 +364,16 @@ impl Gameplay {
 
         self.player.draw(canvas);
 
+        // The sprite-planning layer authored in the editor.
         self.level.draw(canvas);
+
+        // Debug view: overlay the editor's collision layer (translucent so the
+        // sprites underneath stay visible). Off during normal play.
+        if self.debug_collisions {
+            for shape in &self.level.collision_shapes {
+                shape.with_alpha(0.4).draw(canvas);
+            }
+        }
 
         self.test_movable.draw(canvas);
         canvas.end_mode_2d();
@@ -361,16 +390,13 @@ impl Gameplay {
     }
 }
 
-/// Load the editor's level from disk on native; on the web there is no
-/// synchronous filesystem, so start empty (assets would be embedded instead).
+/// The level authored in the editor, embedded at build time. Embedding (rather
+/// than reading a file at runtime) keeps the level available identically on
+/// native and on the web, and independent of the working directory.
+const EDITOR_LEVEL_JSON: &str = include_str!("new.json");
+
+/// Parse the embedded editor level. A malformed file falls back to an empty
+/// level rather than crashing the game.
 fn load_level() -> Level {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Level::load(DEFAULT_LEVEL_PATH).unwrap_or_default()
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = DEFAULT_LEVEL_PATH;
-        Level::default()
-    }
+    Level::from_json(EDITOR_LEVEL_JSON).unwrap_or_default()
 }

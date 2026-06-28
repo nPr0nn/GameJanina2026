@@ -792,6 +792,7 @@ dependencies = [
 name = "game"
 version = "0.1.0"
 dependencies = [
+ "image",
  "juni",
  "serde_json",
 ]
