@@ -793,6 +793,7 @@ name = "game"
 version = "0.1.0"
 dependencies = [
  "juni",
+ "serde_json",
 ]
 
 [[package]]
@@ -1078,6 +1079,7 @@ dependencies = [
  "console_log",
  "cpal",
  "env_logger",
+ "fontdb",
  "glam",
  "glyphon",
  "image",

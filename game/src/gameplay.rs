@@ -10,6 +10,7 @@ use juni::prelude::*;
 
 use crate::chain::Chain;
 use crate::collision::{push_rect_out_of_aabb, push_rect_out_of_circle, resolve_swept, Collider};
+use crate::loc::Loc;
 use crate::player::Player;
 use crate::squeezable::Squeezables;
 
@@ -67,6 +68,7 @@ pub struct Gameplay {
     spin: f32,
     zoom: f32,
     fps: u32,
+    loc: Loc,
     /// The level authored in the `editor` crate, in world coordinates. Drawn
     /// through the game camera, the same way the editor authored it.
     level: Level,
@@ -89,8 +91,8 @@ pub struct Gameplay {
 }
 
 impl Gameplay {
-    pub fn new(ctx: &mut Context) -> Self {
-        let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
+    pub fn new(ctx: &mut Context, loc: Loc) -> Self {
+        let cow_texture = ctx.load_texture_from_memory(include_bytes!("../assets/sprites/vaca.png"));
         let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         let chain_anchor = Vec2D::new(640.0, 100.0);
         let mut player = Player::new(cow_texture.clone());
@@ -127,10 +129,11 @@ impl Gameplay {
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
             cow: cow_texture.clone(),
             player,
-            pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
+            pop: ctx.load_sound_from_memory(include_bytes!("../assets/audio/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
             fps: 0,
+            loc,
             level: load_level(),
             chains,
             chain_anchor,
@@ -346,21 +349,15 @@ impl Gameplay {
         self.test_movable.draw(canvas);
         canvas.end_mode_2d();
 
-        canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
+        canvas.text(&self.loc.fps(self.fps), 20.0, 20.0, 28.0, LIME);
         canvas.text(
-            &format!("SQUEEZED: {}", self.squeeze_count.get()),
+            &self.loc.squeezed(self.squeeze_count.get()),
             20.0,
             52.0,
             28.0,
             MAGENTA,
         );
-        canvas.text(
-            "WASD move · wheel zoom · P pause · K defeat · L win",
-            20.0,
-            680.0,
-            24.0,
-            WHITE,
-        );
+        canvas.text(self.loc.hud_controls(), 20.0, 680.0, 24.0, WHITE);
     }
 }
 

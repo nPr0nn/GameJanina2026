@@ -87,6 +87,10 @@ pub struct Config {
     /// disables MSAA; `4` is a common choice. Unsupported values fall back to
     /// the highest supported count at or below the request (down to `1`).
     pub msaa: u32,
+    /// Optional custom font bytes. When `Some`, the engine loads this font as
+    /// the default instead of the built-in font. Pair with `include_bytes!` to
+    /// embed a font from your game's asset folder.
+    pub font_bytes: Option<&'static [u8]>,
 }
 
 impl Default for Config {
@@ -102,6 +106,7 @@ impl Default for Config {
             centered: false,
             fullscreen: false,
             msaa: 1,
+            font_bytes: None,
         }
     }
 }

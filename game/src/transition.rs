@@ -9,7 +9,7 @@
 /// Seconds each half of the fade takes. The full transition is twice this.
 const FADE_SECONDS: f32 = 0.30;
 
-/// The five screens the game can be on. `Copy` so it's trivially passed around.
+/// The screens the game can be on. `Copy` so it's trivially passed around.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
     Menu,
@@ -17,6 +17,9 @@ pub enum Screen {
     Pause,
     Defeat,
     Win,
+    Instructions,
+    Credits,
+    Config,
 }
 
 enum Phase {
