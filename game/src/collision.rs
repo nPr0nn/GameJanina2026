@@ -1,3 +1,8 @@
+// A general 2D collision toolkit. The gameplay screen currently only uses the
+// swept-AABB resolver, but the point/circle/push helpers are kept as a library
+// to build on, so unused entries here are expected.
+#![allow(dead_code)]
+
 use juni::prelude::*;
 
 // ── Swept AABB ─────────────────────────────────────────────────────────────
