@@ -14,3 +14,9 @@ juni = { path = "../engine" }
 serde_json = "1"
 # Used by the sprite-sheet animation system to scan frames for empty cells.
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Web only: there is no synchronous filesystem on wasm, so the level's sprite
+# PNGs (under `../sprites`) are embedded into the binary and loaded from memory.
+# Native keeps reading them from disk, so its binary stays lean.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+include_dir = "0.7"

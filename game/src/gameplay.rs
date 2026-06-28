@@ -1253,9 +1253,30 @@ fn load_sprite_textures(ctx: &mut Context, level: &Level) -> HashMap<String, Tex
     cache
 }
 
+/// The level's sprite folder, embedded into the wasm binary at build time.
+/// Rooted at `sprites/`, so a level path of `"sprites/Foo.png"` maps to the
+/// embedded file `Foo.png`.
 #[cfg(target_arch = "wasm32")]
-fn load_sprite_textures(_ctx: &mut Context, _level: &Level) -> HashMap<String, Texture> {
-    HashMap::new()
+static SPRITE_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../sprites");
+
+/// Web: there is no synchronous filesystem, so decode each unique sprite PNG
+/// from the embedded [`SPRITE_DIR`] instead of reading it from disk.
+#[cfg(target_arch = "wasm32")]
+fn load_sprite_textures(ctx: &mut Context, level: &Level) -> HashMap<String, Texture> {
+    let mut cache = HashMap::new();
+    for inst in &level.sprite_instances {
+        if cache.contains_key(&inst.path) {
+            continue;
+        }
+        // Level paths are `sprites/<file>`; the embedded dir is rooted at the
+        // `sprites/` folder, so strip that prefix to find the file.
+        let rel = inst.path.strip_prefix("sprites/").unwrap_or(inst.path.as_str());
+        if let Some(file) = SPRITE_DIR.get_file(rel) {
+            cache.insert(inst.path.clone(), ctx.load_texture_from_memory(file.contents()));
+        }
+    }
+    cache
 }
 
 /// The level authored in the editor, embedded at build time. Embedding (rather

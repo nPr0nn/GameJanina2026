@@ -311,7 +311,7 @@ impl Chain {
         if self.joint_obstacles[i].is_empty() {
             (to, false)
         } else {
-            self.joint_move(i, from, to)
+            move_point_swept_in(from, to, &self.joint_obstacles[i])
         }
     }
 
