@@ -593,15 +593,27 @@ impl Gameplay {
         }
     }
 
-    /// Draw the sprite instances and the player interleaved by depth: each
-    /// entity is keyed by the world-Y of its bottom edge, and they're painted
-    /// from smallest key (furthest back) to largest (frontmost). The player's
-    /// key is the bottom of its hit box; a sprite's is the bottom of its image.
+    /// Draw the sprite instances and the player with depth ordering.
+    ///
+    /// For now only `mov`-tagged sprites participate in the Y-sort: everything
+    /// else is flat background drawn first, then the movable sprites and the
+    /// player are interleaved by the world-Y of their bottom edge ("feet"),
+    /// painted back-to-front. The player's key is the bottom of its hit box; a
+    /// sprite's is the bottom of its image.
     fn draw_y_sorted(&self, canvas: &mut Canvas) {
-        // (depth key, what to draw). `Player` is `None`.
-        let mut order: Vec<(f32, Option<usize>)> =
-            Vec::with_capacity(self.level.sprite_instances.len() + 1);
+        // Static (non-movable) sprites: plain background, drawn in authored order.
         for (i, inst) in self.level.sprite_instances.iter().enumerate() {
+            if self.level.get_tag(&inst.id) != Some(TAG_MOVABLE) {
+                self.draw_sprite(canvas, i);
+            }
+        }
+
+        // Movable sprites + the player, keyed by feet-Y. `None` is the player.
+        let mut order: Vec<(f32, Option<usize>)> = Vec::new();
+        for (i, inst) in self.level.sprite_instances.iter().enumerate() {
+            if self.level.get_tag(&inst.id) != Some(TAG_MOVABLE) {
+                continue;
+            }
             let height = self
                 .sprite_textures
                 .get(&inst.path)
@@ -613,20 +625,17 @@ impl Gameplay {
 
         for (_, item) in order {
             match item {
-                Some(i) => {
-                    let inst = &self.level.sprite_instances[i];
-                    if let Some(tex) = self.sprite_textures.get(&inst.path) {
-                        canvas.draw_texture_ex(
-                            tex,
-                            Vec2D::new(inst.x, inst.y),
-                            0.0,
-                            inst.scale,
-                            WHITE,
-                        );
-                    }
-                }
+                Some(i) => self.draw_sprite(canvas, i),
                 None => self.player.draw(canvas),
             }
+        }
+    }
+
+    /// Draw sprite instance `i` at its authored position and scale.
+    fn draw_sprite(&self, canvas: &mut Canvas, i: usize) {
+        let inst = &self.level.sprite_instances[i];
+        if let Some(tex) = self.sprite_textures.get(&inst.path) {
+            canvas.draw_texture_ex(tex, Vec2D::new(inst.x, inst.y), 0.0, inst.scale, WHITE);
         }
     }
 
