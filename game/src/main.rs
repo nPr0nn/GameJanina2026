@@ -13,7 +13,6 @@ mod chain;
 mod squeezable;
 mod gameplay;
 mod transition;
-mod movable;
 mod menu;
 mod loc;
 
@@ -157,7 +156,7 @@ impl Game for App {
     fn init(ctx: &mut Context) -> Self {
         let loc = Loc::new(Lang::English);
         Self {
-            screen: Screen::Menu,
+            screen: Screen::Gameplay,
             transition: Transition::new(),
             gameplay: Gameplay::new(ctx, loc),
             menu: Menu::new(ctx, loc),

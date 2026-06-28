@@ -1,6 +1,11 @@
-// A general 2D collision toolkit. The gameplay screen currently only uses the
-// swept-AABB resolver, but the point/circle/push helpers are kept as a library
-// to build on, so unused entries here are expected.
+// A general 2D collision toolkit, built around continuous (swept) resolution.
+//
+// The player moves through [`resolve_aabb`], which sweeps an AABB against a set
+// of [`Collider`]s (rectangles and circles alike) and slides along the first
+// surface it touches, so fast movers never tunnel. [`depenetrate_aabb`] is the
+// static safety net run afterwards. The chain uses the point-based swept queries
+// ([`move_point_swept`]). Some helpers are kept as a library to build on, so
+// unused entries here are expected.
 #![allow(dead_code)]
 
 use juni::prelude::*;
@@ -51,41 +56,129 @@ pub fn sweep_rect(pos: Vec2D, size: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f3
     Some((t, normal))
 }
 
-/// Move a rect (`pos`, `size`) by `vel` against all `obstacles`, resolving
-/// collisions with sliding (up to 3 bounces/steps per frame).
+// ── Continuous AABB resolution (the player's movement phase) ────────────────
+
+/// Maximum slide iterations per movement step. Each iteration resolves one
+/// surface, so this caps how many corners a single move can wrap around.
+const MAX_SLIDES: usize = 4;
+/// Perpendicular clearance kept between the mover and a surface after a contact,
+/// so the next sweep starts cleanly outside the surface's slab. Stepping off
+/// along the *normal* (not the travel direction) keeps this clearance true even
+/// when grazing a wall at a shallow angle — otherwise the box drifts inside the
+/// perpendicular slab and the sweep misreads which axis it hit, snagging it.
+const SKIN: f32 = 0.1;
+
+/// Move an axis-aligned box (top-left `pos`, dimensions `size`) by `vel` against
+/// every [`Collider`] using **continuous collision detection**: each step sweeps
+/// to the first time-of-impact, stops just short of the surface, then slides the
+/// remaining motion along it. Because contact is found by sweeping (not by
+/// testing the destination), the box cannot tunnel through thin or small shapes
+/// no matter how fast it moves.
 ///
-/// Returns the final top-left position.
-pub fn resolve_swept(mut pos: Vec2D, size: Vec2D, mut vel: Vec2D, obstacles: &[Rect]) -> Vec2D {
-    const EPS: f32 = 0.001;
-    for _ in 0..3 {
-        if vel.length_squared() < 1e-6 {
+/// Returns the final top-left position. `vel` is the intended displacement for
+/// the whole step (already multiplied by `dt`).
+pub fn resolve_aabb(mut pos: Vec2D, size: Vec2D, mut vel: Vec2D, colliders: &[Collider]) -> Vec2D {
+    for _ in 0..MAX_SLIDES {
+        if vel.length_squared() < 1e-8 {
             break;
         }
-        // Find earliest collision across all obstacles.
+        // Broad sweep: earliest time-of-impact across every collider.
         let mut t_min = 1.0f32;
-        let mut hit_normal = Vec2D::ZERO;
-        for &rect in obstacles {
-            if let Some((t, n)) = sweep_rect(pos, size, vel, rect) {
+        let mut normal = Vec2D::ZERO;
+        let mut hit = false;
+        for c in colliders {
+            if let Some((t, n)) = c.sweep_aabb(pos, size, vel) {
                 if t < t_min {
                     t_min = t;
-                    hit_normal = n;
+                    normal = n;
+                    hit = true;
                 }
             }
         }
 
-        // Advance to contact (back off by epsilon to avoid sticking).
-        pos += vel * (t_min - EPS).max(0.0);
-
-        if t_min < 1.0 {
-            // Slide: project remaining velocity onto the surface plane.
-            let remaining = (1.0 - t_min) * vel;
-            let dot = remaining.dot(hit_normal);
-            vel = remaining - hit_normal * dot;
-        } else {
+        if !hit {
+            pos += vel;
             break;
+        }
+
+        // Orient the contact normal to oppose the motion (point back at the
+        // mover). The swept queries don't promise a consistent sign, so we fix
+        // it here: stepping off along this normal always grows the perpendicular
+        // clearance rather than shrinking it.
+        let n = if normal.dot(vel) > 0.0 { -normal } else { normal };
+
+        // Advance to the contact point, then lift off the surface by SKIN *along
+        // the normal* so the next sweep begins outside the obstacle's slab.
+        pos += vel * t_min + n * SKIN;
+
+        // Slide: drop the into-surface component and continue with the remainder.
+        let remaining = vel * (1.0 - t_min);
+        vel = remaining - n * remaining.dot(n);
+    }
+    pos
+}
+
+/// Static depenetration pass: nudge the box out of any collider it currently
+/// overlaps. The continuous resolver keeps the box outside during motion, so
+/// this is only a safety net for edge cases (spawning inside a shape, a shape
+/// growing into the box, float drift). Run once after the movement phase.
+pub fn depenetrate_aabb(mut pos: Vec2D, size: Vec2D, colliders: &[Collider]) -> Vec2D {
+    for c in colliders {
+        let push = match *c {
+            Collider::Aabb(rect) => push_rect_out_of_aabb(pos, size, rect),
+            Collider::Circle { center, radius } => {
+                push_rect_out_of_circle(pos, size, center, radius)
+            }
+        };
+        if let Some((new_pos, _)) = push {
+            pos = new_pos;
         }
     }
     pos
+}
+
+/// Swept **box** vs static circle, via the Minkowski sum of the box and the
+/// disk: a rectangle rounded by `radius`. In the box's centre frame the circle
+/// centre becomes a moving point, tested against that rounded rectangle — the
+/// union of an x-expanded box, a y-expanded box, and four corner circles. The
+/// earliest entry into any piece is the earliest contact with the whole shape.
+fn sweep_aabb_circle(
+    pos: Vec2D,
+    size: Vec2D,
+    vel: Vec2D,
+    center: Vec2D,
+    radius: f32,
+) -> Option<(f32, Vec2D)> {
+    let half = size * 0.5;
+    let box_center = pos + half;
+    // Circle centre relative to the box centre, and its motion in that frame.
+    let origin = center - box_center;
+    let dir = -vel;
+
+    let candidates = [
+        // Box expanded by the radius along each axis (the flat-face contacts).
+        sweep_point_aabb(
+            origin,
+            dir,
+            Rect::new(-(half.x + radius), -half.y, 2.0 * (half.x + radius), 2.0 * half.y),
+        ),
+        sweep_point_aabb(
+            origin,
+            dir,
+            Rect::new(-half.x, -(half.y + radius), 2.0 * half.x, 2.0 * (half.y + radius)),
+        ),
+        // The four rounded corners.
+        sweep_point_circle(origin, dir, Vec2D::new(-half.x, -half.y), radius),
+        sweep_point_circle(origin, dir, Vec2D::new(-half.x, half.y), radius),
+        sweep_point_circle(origin, dir, Vec2D::new(half.x, -half.y), radius),
+        sweep_point_circle(origin, dir, Vec2D::new(half.x, half.y), radius),
+    ];
+
+    // Earliest entry into any piece is the earliest contact with the union.
+    candidates
+        .into_iter()
+        .flatten()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 // ── Generic colliders (the chain wraps around any of these) ─────────────────
@@ -104,6 +197,18 @@ pub enum Collider {
 }
 
 impl Collider {
+    /// Swept **box** query: sweep an AABB (top-left `pos`, dimensions `size`)
+    /// along `vel` against this shape. Returns first-contact time `t ∈ [0,1]`
+    /// and a contact normal (orientation unspecified — used only for sliding).
+    fn sweep_aabb(&self, pos: Vec2D, size: Vec2D, vel: Vec2D) -> Option<(f32, Vec2D)> {
+        match *self {
+            Collider::Aabb(rect) => sweep_rect(pos, size, vel, rect),
+            Collider::Circle { center, radius } => {
+                sweep_aabb_circle(pos, size, vel, center, radius)
+            }
+        }
+    }
+
     /// Swept point query: cast `pos` along `vel` (one frame) against this shape.
     /// Returns first-contact time `t ∈ [0,1]` and the outward surface normal.
     fn sweep_point(&self, pos: Vec2D, vel: Vec2D) -> Option<(f32, Vec2D)> {

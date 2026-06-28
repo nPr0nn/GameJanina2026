@@ -1,6 +1,7 @@
-//! The gameplay screen: chain-lasso prototype with obstacles, squeezable
-//! circles, a movable box, and portals. World state lives here; global keys
-//! (pause, fullscreen, win/lose) are handled by the screen manager in `main.rs`.
+//! The gameplay screen. It renders the level authored in the editor (the
+//! sprite-planning layer) and the player, plus the chain-lasso mechanic. The
+//! player walks with WASD / arrows and collides with the level's collision
+//! layer; press F3 to draw that collision layer on top for debugging.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -9,96 +10,54 @@ use juni::prelude::*;
 
 use crate::animation::SpriteSheet;
 use crate::chain::Chain;
-use crate::collision::{push_rect_out_of_aabb, push_rect_out_of_circle, resolve_swept, Collider};
+use crate::collision::{depenetrate_aabb, resolve_aabb, Collider};
 use crate::loc::Loc;
 use crate::player::Player;
 use crate::squeezable::Squeezables;
 
-// A custom fragment shader: an animated rainbow driven by world position and
-// `globals.time`. Same vertex/uniform interface as the built-in shape shader,
-// so it plugs straight into `begin_shader_mode`.
+/// Where the player spawns, in world coordinates.
+const PLAYER_START: Vec2D = Vec2D::new(640.0, 150.0);
+/// Where the chains are anchored, in world coordinates.
+const CHAIN_ANCHOR: Vec2D = Vec2D::new(640.0, 100.0);
 /// Seconds of player stillness before the chain is allowed to freeze.
 const PLAYER_STILL_THRESHOLD: f32 = 0.01;
 /// Maximum joint displacement (px/frame) considered "totally still".
 const CHAIN_STILL_THRESHOLD: f32 = 0.01;
-
-const RAINBOW_SHADER: &str = r#"
-struct Globals {
-    proj: mat4x4<f32>,
-    time: f32,
-};
-@group(0) @binding(0) var<uniform> globals: Globals;
-
-struct VsOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>) -> VsOut {
-    var out: VsOut;
-    out.clip = globals.proj * vec4<f32>(position, 0.0, 1.0);
-    out.world = position;
-    return out;
-}
-
-// Hue (0..1) -> RGB.
-fn hue(h: f32) -> vec3<f32> {
-    let r = abs(h * 6.0 - 3.0) - 1.0;
-    let g = 2.0 - abs(h * 6.0 - 2.0);
-    let b = 2.0 - abs(h * 6.0 - 4.0);
-    return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let h = fract((in.world.x + in.world.y) * 0.0015 + globals.time * 0.2);
-    return vec4<f32>(hue(h), 1.0);
-}
-"#;
+/// Iterations of the chain-length constraint solved per frame.
+const CHAIN_CLAMP_ITERS: usize = 4;
 
 pub struct Gameplay {
-    x: f32,
-    dir: f32,
     player: Player,
-    mouse: Vec2D,
-    rainbow: Shader,
-    cow: Texture,
     /// The ducky sprite sheet that backs the player's animation. Kept here so a
     /// `reset` can hand a fresh clone to a new `Player`.
     ducky: SpriteSheet,
-    /// When `true`, the editor's collision layer is drawn on top of the level
+    /// When `true`, the level's collision layer is drawn on top of the level
     /// (toggle with F3). Off by default — normal play shows only the sprites.
     debug_collisions: bool,
-    pop: Sound,
-    spin: f32,
     zoom: f32,
     fps: u32,
     loc: Loc,
-    /// The level authored in the `editor` crate, in world coordinates. Drawn
-    /// through the game camera, the same way the editor authored it.
+    /// The level authored in the editor, in world coordinates. Drawn through the
+    /// game camera, the same way the editor authored it.
     level: Level,
+    /// The level's collision layer as colliders (world space), derived once at
+    /// load. Static for the lifetime of the level.
+    level_colliders: Vec<Collider>,
     chains: Vec<Chain>,
-    chain_anchor: Vec2D,
     prev_player_pos: Vec2D,
     player_still_for: f32,
-    /// Static obstacles in world space. Chains and the player both collide
-    /// with these; chain joints wrap around them naturally.
-    obstacles: Vec<Rect>,
     /// Round objects that get crushed when a chain loops tight around them.
     squeezables: Squeezables,
     /// Running squeeze tally, shared with the squeeze listener so the HUD can
     /// display it. Demonstrates the event/listener wiring.
     squeeze_count: Rc<Cell<u32>>,
-    /// Scratch buffer for the per-frame collider set (blocks + live objects),
-    /// reused to avoid a heap allocation every update.
+    /// Scratch buffer for the per-frame chain collider set (level shapes + live
+    /// squeezables), reused to avoid a heap allocation every update.
     colliders: Vec<Collider>,
-    test_movable: crate::movable::MovableBox,
 }
 
 impl Gameplay {
     pub fn new(ctx: &mut Context, loc: Loc) -> Self {
-        let cow_texture = ctx.load_texture_from_memory(include_bytes!("../assets/sprites/vaca.png"));
         // The ducky sheet is a 6×4 grid of 32×32 frames (row 0 idle, row 1 walk).
         let ducky = SpriteSheet::from_memory(
             ctx,
@@ -106,23 +65,12 @@ impl Gameplay {
             32,
             32,
         );
-        let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
-        let chain_anchor = Vec2D::new(640.0, 100.0);
         let mut player = Player::new(ducky.clone());
         // Start close to the anchor so all chains begin with visible slack.
-        player.pos = Vec2D::new(640.0, 150.0);
-        // Three chains sharing the same anchor but with different lengths and tints.
-        let chains = vec![
-            Chain::new(chain_anchor, player.pos, 1600.0, 6.0, RED),
-            Chain::new(chain_anchor, player.pos, 2400.0, 6.0, LIME),
-            Chain::new(chain_anchor, player.pos, 3200.0, 6.0, SKYBLUE),
-        ];
-        // Two solid blocks the player and chains can collide with.
-        // Placed within reach of all three chains (max 2200 px from anchor).
-        let obstacles = vec![
-            Rect::new(450.0, 220.0, 90.0, 90.0),
-            Rect::new(720.0, 310.0, 110.0, 70.0),
-        ];
+        player.pos = PLAYER_START;
+
+        let level = load_level();
+        let level_colliders = level_colliders_from(&level);
 
         let mut squeezables = Squeezables::new();
         squeezables.spawn(Vec2D::new(1000.0, 550.0), 45.0);
@@ -132,29 +80,18 @@ impl Gameplay {
             counter.set(counter.get() + 1);
         });
 
-        let prev_player_pos = player.pos;
-
         Self {
-            x: 100.0,
-            dir: 1.0,
-            test_movable,
-            mouse: Vec2D::ZERO,
-            rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
-            cow: cow_texture.clone(),
-            ducky,
-            debug_collisions: false,
+            chains: new_chains(player.pos),
+            prev_player_pos: player.pos,
+            player_still_for: 0.0,
             player,
-            pop: ctx.load_sound_from_memory(include_bytes!("../assets/audio/bolha.wav")),
-            spin: 0.0,
-            zoom: 1.0,
+            ducky,
+            debug_collisions: true,
+            zoom: 0.75,
             fps: 0,
             loc,
-            level: load_level(),
-            chains,
-            chain_anchor,
-            prev_player_pos,
-            player_still_for: 0.0,
-            obstacles,
+            level,
+            level_colliders,
             squeezables,
             squeeze_count,
             colliders: Vec::new(),
@@ -162,24 +99,13 @@ impl Gameplay {
     }
 
     /// Reset world state for a fresh run (called when entering gameplay from the
-    /// menu or after a win/defeat). Reuses the already-loaded GPU/audio assets.
+    /// menu or after a win/defeat). Reuses the already-loaded assets and the
+    /// parsed level (its collision layer never changes at runtime).
     pub fn reset(&mut self) {
-        self.x = 100.0;
-        self.dir = 1.0;
         self.player = Player::new(self.ducky.clone());
-        self.player.pos = Vec2D::new(640.0, 150.0);
-        self.chains = vec![
-            Chain::new(self.chain_anchor, self.player.pos, 1600.0, 6.0, RED),
-            Chain::new(self.chain_anchor, self.player.pos, 2400.0, 6.0, LIME),
-            Chain::new(self.chain_anchor, self.player.pos, 3200.0, 6.0, SKYBLUE),
-        ];
-        self.test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
-        self.spin = 0.0;
+        self.player.pos = PLAYER_START;
+        self.chains = new_chains(self.player.pos);
         self.zoom = 1.0;
-        self.obstacles = vec![
-            Rect::new(450.0, 220.0, 90.0, 90.0),
-            Rect::new(720.0, 310.0, 110.0, 70.0),
-        ];
         self.squeezables.revive_all();
         self.squeeze_count.set(0);
         self.prev_player_pos = self.player.pos;
@@ -189,7 +115,6 @@ impl Gameplay {
     /// Advance the world one fixed step. Only called while actually playing, so
     /// pausing freezes everything here automatically.
     pub fn update(&mut self, ctx: &mut Context) {
-        self.mouse = ctx.mouse_position();
         self.fps = ctx.fps;
 
         // Toggle the collision-layer debug overlay.
@@ -197,10 +122,7 @@ impl Gameplay {
             self.debug_collisions = !self.debug_collisions;
         }
 
-        // Play a pop on each left-click.
-        if ctx.is_mouse_button_pressed(MouseButton::Left) {
-            ctx.play_sound(&self.pop);
-        }
+        self.zoom = (self.zoom + ctx.mouse_wheel_move() * 0.1).clamp(0.1, 4.0);
 
         // Track how long the player has been still.
         if self.player.pos.distance_squared(self.prev_player_pos) > 1e-4 {
@@ -210,41 +132,71 @@ impl Gameplay {
             self.player_still_for += ctx.dt;
         }
 
-        // Build the collider set: blocks + living squeezables.
-        self.colliders.clear();
-        self.colliders
-            .extend(self.obstacles.iter().map(|&r| Collider::Aabb(r)));
-        self.squeezables.extend_colliders(&mut self.colliders);
+        // Rebuild the world collider set: the level's static shapes plus the
+        // live squeezables. Both the player and the chains resolve against it.
+        self.rebuild_colliders();
 
-        // Move the player against blocks, then push out of round objects.
-        let move_dir = self.player.input_direction(ctx);
-        let vel = move_dir * self.player.speed * ctx.dt;
-        self.player.pos =
-            resolve_swept(self.player.pos, self.player.shape, vel, &self.obstacles);
-        for (center, radius) in self.squeezables.alive() {
-            if let Some((new_pos, _)) =
-                push_rect_out_of_circle(self.player.pos, self.player.shape, center, radius)
-            {
-                self.player.pos = new_pos;
-            }
+        // Integrate the player's velocity from input (acceleration + friction).
+        self.player.input_direction(ctx);
+
+        // ── Collision phase ─────────────────────────────────────────────────
+        // Move the player continuously by its velocity, let the chains follow
+        // and simulate, then constrain the player to the (now-current) chain
+        // lengths. A final depenetration pass un-sticks any residual overlap.
+        self.move_player(ctx);
+        self.step_chains(ctx);
+        self.constrain_player_to_chains();
+        self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &self.colliders);
+
+        // Sync the chain ends to the player's final attachment point.
+        let end = self.player.chain_point();
+        for chain in &mut self.chains {
+            chain.set_end(end);
         }
 
-        // Simulate chains only while the player is moving or the chain is still
-        // settling. Once the player stops and the chains go totally still, freeze
-        // them to avoid micro-oscillations and save work.
+        // Crush any object a chain has cinched tight.
+        self.squeezables.update(&self.chains);
+    }
+
+    /// Rebuild the per-frame collider set into the reused `colliders` buffer:
+    /// the level's static colliders followed by the currently-alive squeezables.
+    fn rebuild_colliders(&mut self) {
+        self.colliders.clear();
+        self.colliders.extend(self.level_colliders.iter().copied());
+        self.squeezables.extend_colliders(&mut self.colliders);
+    }
+
+    /// Move the player by its velocity for this frame, resolved continuously so
+    /// it slides along the first surface it meets and never tunnels.
+    fn move_player(&mut self, ctx: &Context) {
+        let displacement = self.player.velocity * ctx.dt;
+        self.player.pos =
+            resolve_aabb(self.player.pos, self.player.shape, displacement, &self.colliders);
+    }
+
+    /// Drive the chains to follow the player's attachment point and simulate
+    /// them. They freeze once the player and the chains have all gone still, to
+    /// avoid micro-oscillations and save work.
+    fn step_chains(&mut self, ctx: &Context) {
         let chains_frozen = self.player_still_for >= PLAYER_STILL_THRESHOLD
             && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
+        let end = self.player.chain_point();
         for chain in &mut self.chains {
-            chain.set_start(self.chain_anchor);
-            chain.set_end(self.player.pos);
+            chain.set_start(CHAIN_ANCHOR);
+            chain.set_end(end);
             if !chains_frozen {
                 chain.update(ctx.dt, &self.colliders);
             }
         }
+    }
 
-        // Clamp the player to each chain's remaining free length.
-        for _ in 0..4 {
-            let mut target = self.player.pos;
+    /// Constrain the player so each chain's attachment point stays within its
+    /// remaining free length. The pull is resolved continuously (so a taut chain
+    /// can't drag the player through a wall); since the attachment point moves
+    /// rigidly with `pos`, a correction on it applies one-for-one to `pos`.
+    fn constrain_player_to_chains(&mut self) {
+        for _ in 0..CHAIN_CLAMP_ITERS {
+            let mut target = self.player.chain_point();
             for chain in &self.chains {
                 let (tether, free_len) = chain.player_tether();
                 let dist = tether.distance(target);
@@ -253,66 +205,17 @@ impl Gameplay {
                     target = tether + dir * free_len;
                 }
             }
-            let delta = target - self.player.pos;
+            let delta = target - self.player.chain_point();
             if delta.length_squared() < 1e-4 {
                 break; // converged
             }
             self.player.pos =
-                resolve_swept(self.player.pos, self.player.shape, delta, &self.obstacles);
-        }
-
-        // Push the player out of any overlapping block or object.
-        for &rect in &self.obstacles {
-            if let Some((new_pos, _)) =
-                push_rect_out_of_aabb(self.player.pos, self.player.shape, rect)
-            {
-                self.player.pos = new_pos;
-            }
-        }
-        for (center, radius) in self.squeezables.alive() {
-            if let Some((new_pos, _)) =
-                push_rect_out_of_circle(self.player.pos, self.player.shape, center, radius)
-            {
-                self.player.pos = new_pos;
-            }
-        }
-
-        for chain in &mut self.chains {
-            chain.set_end(self.player.pos);
-        }
-
-        // Crush any object a chain has cinched tight.
-        self.squeezables.update(&self.chains);
-
-        self.spin += 90.0 * ctx.dt;
-
-        self.zoom = (self.zoom + ctx.mouse_wheel_move() * 0.1).clamp(0.1, 4.0);
-
-        self.x += self.dir * 240.0 * ctx.dt;
-        if self.x > 1080.0 {
-            self.x = 1080.0;
-            self.dir = -1.0;
-        } else if self.x < 100.0 {
-            self.x = 100.0;
-            self.dir = 1.0;
-        }
-
-        self.test_movable.update(ctx);
-
-        // Push the movable box when the player walks into it.
-        let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
-        let box_rect = self.test_movable.rect;
-        if player_rect.intersects(&box_rect) {
-            let impulse = self.player.velocity * self.player.player_speed * ctx.dt;
-            self.test_movable.push(impulse);
-            self.player.player_speed = 200.0; // Slow down while pushing
-        } else {
-            self.player.player_speed = 500.0; // Restore normal speed
+                resolve_aabb(self.player.pos, self.player.shape, delta, &self.colliders);
         }
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
-        canvas.clear_background(WHITE);
+        canvas.clear_background(BLACK);
 
         let camera = Camera2D {
             target: self.player.pos + Vec2D::new(50.0, 50.0),
@@ -322,19 +225,17 @@ impl Gameplay {
         };
         canvas.begin_mode_2d(camera);
 
-        for &rect in &self.obstacles {
-            canvas.rectangle_from_rect(rect, DARKGRAY);
-        }
+        // The sprite-planning layer authored in the editor (background).
+        self.level.draw(canvas);
 
-        canvas.begin_shader_mode(&self.rainbow);
-        canvas.quad(
-            Vec2D::new(400.0, 300.0),
-            Vec2D::new(500.0, 300.0),
-            Vec2D::new(500.0, 480.0),
-            Vec2D::new(400.0, 480.0),
-            RED,
-        );
-        canvas.end_shader_mode();
+        // Debug view: overlay the level's collision layer (translucent so the
+        // sprites underneath stay visible). Off during normal play.
+        if self.debug_collisions {
+            for shape in &self.level.collision_shapes {
+                shape.with_alpha(0.4).draw(canvas);
+            }
+            self.player.draw_collider(canvas);
+        }
 
         for (pos, radius) in self.squeezables.alive() {
             canvas.circle(pos, radius, MAGENTA);
@@ -344,38 +245,9 @@ impl Gameplay {
         for chain in &self.chains {
             chain.draw(canvas);
         }
-        canvas.circle(self.chain_anchor, 12.0, GOLD);
-
-        let size = self.cow.width() as f32 * 4.0;
-        canvas.draw_texture_pro(
-            &self.cow,
-            Rect::new(0.0, 0.0, self.cow.width() as f32, self.cow.height() as f32),
-            Rect::new(1180.0, 600.0, size, size),
-            Vec2D::new(size / 2.0, size / 2.0),
-            self.spin,
-            RED,
-        );
-
-        let center = camera.screen_to_world(Vec2D::new(640.0, 360.0));
-        let cursor = camera.screen_to_world(self.mouse);
-        canvas.line(center, cursor, 5.0, DARKBLUE);
-
-        canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
+        canvas.circle(CHAIN_ANCHOR, 12.0, GOLD);
 
         self.player.draw(canvas);
-
-        // The sprite-planning layer authored in the editor.
-        self.level.draw(canvas);
-
-        // Debug view: overlay the editor's collision layer (translucent so the
-        // sprites underneath stay visible). Off during normal play.
-        if self.debug_collisions {
-            for shape in &self.level.collision_shapes {
-                shape.with_alpha(0.4).draw(canvas);
-            }
-        }
-
-        self.test_movable.draw(canvas);
         canvas.end_mode_2d();
 
         canvas.text(&self.loc.fps(self.fps), 20.0, 20.0, 28.0, LIME);
@@ -388,6 +260,34 @@ impl Gameplay {
         );
         canvas.text(self.loc.hud_controls(), 20.0, 680.0, 24.0, WHITE);
     }
+}
+
+/// Build the three chains that tether the player to `CHAIN_ANCHOR`, each with a
+/// different length and tint, all starting at the player's spawn.
+fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
+    vec![
+        Chain::new(CHAIN_ANCHOR, player_pos, 1600.0, 6.0, RED),
+        Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 6.0, LIME),
+        Chain::new(CHAIN_ANCHOR, player_pos, 3200.0, 6.0, SKYBLUE),
+    ]
+}
+
+/// Convert the level's collision layer into colliders, in world coordinates.
+/// Done once at load — the collision layer is static at runtime.
+fn level_colliders_from(level: &Level) -> Vec<Collider> {
+    level
+        .collision_shapes
+        .iter()
+        .map(|shape| match shape {
+            Shape::Rect {
+                x, y, width, height, ..
+            } => Collider::Aabb(Rect::new(*x, *y, *width, *height)),
+            Shape::Circle { x, y, radius, .. } => Collider::Circle {
+                center: Vec2D::new(*x, *y),
+                radius: *radius,
+            },
+        })
+        .collect()
 }
 
 /// The level authored in the editor, embedded at build time. Embedding (rather
