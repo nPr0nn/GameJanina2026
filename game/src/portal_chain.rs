@@ -18,6 +18,7 @@
 
 use juni::prelude::*;
 
+use crate::animation::SpriteSheet;
 use crate::chain::Chain;
 use crate::collision::Collider;
 
@@ -45,12 +46,21 @@ pub struct PortalChain {
     color: Color,
     /// Rest segment length carried into frozen snippets so links stay uniform.
     segment_length: f32,
+    /// Sprite sheet shared by every snippet in this chain. Cloning is cheap.
+    sheet: SpriteSheet,
 }
 
 impl PortalChain {
     /// Create an un-split chain (a single active snippet) from `start` to `end`.
-    pub fn new(start: Vec2D, end: Vec2D, total_length: f32, link_size: f32, color: Color) -> Self {
-        let active = Chain::new(start, end, total_length, link_size, color);
+    pub fn new(
+        start: Vec2D,
+        end: Vec2D,
+        total_length: f32,
+        link_size: f32,
+        color: Color,
+        sheet: SpriteSheet,
+    ) -> Self {
+        let active = Chain::new(start, end, total_length, link_size, color, sheet.clone());
         let segment_length = active.segment_length();
         Self {
             snippets: vec![active],
@@ -59,6 +69,7 @@ impl PortalChain {
             link_size,
             color,
             segment_length,
+            sheet,
         }
     }
 
@@ -139,8 +150,13 @@ impl PortalChain {
         let b = in_center;
         let f_init = polyline_length(&captured);
         let f_min = a.distance(b);
-        let frozen_chain =
-            Chain::from_points(&captured, self.segment_length, self.link_size, self.color);
+        let frozen_chain = Chain::from_points(
+            &captured,
+            self.segment_length,
+            self.link_size,
+            self.color,
+            self.sheet.clone(),
+        );
 
         // The old active snippet becomes frozen; append a new active snippet.
         let active_idx = self.snippets.len() - 1;
@@ -159,6 +175,7 @@ impl PortalChain {
             self.active_budget(),
             self.link_size,
             self.color,
+            self.sheet.clone(),
         );
         self.snippets.push(new_active);
     }
@@ -178,6 +195,7 @@ impl PortalChain {
             self.active_budget(),
             self.link_size,
             self.color,
+            self.sheet.clone(),
         );
         self.snippets.push(new_active);
     }

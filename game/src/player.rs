@@ -59,7 +59,8 @@ impl Player {
             shape: Vec2D::new(28.0, 28.0),
             speed: 500.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
-            chain_offset: Vec2D::new(14.0, 14.0), // Tether at the hit-box centre
+            // The duck sprite is 32×32, so centre the tether point on the sprite.
+            chain_offset: Vec2D::new(18.0, 24.0),
             // Loop the idle row to start; `input_direction` switches to walking.
             anim: Animation::new(sheet, ANIM_IDLE, 10.0, true),
             facing_left: false,

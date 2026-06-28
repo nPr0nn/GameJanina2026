@@ -1,5 +1,6 @@
 use juni::prelude::*;
 
+use crate::animation::{Animation, SpriteSheet};
 use crate::collision::{move_point_swept, push_point_out_of_all, Collider};
 
 #[derive(Debug, Clone, Copy)]
@@ -59,9 +60,11 @@ pub struct Chain {
     /// `0.0` = always floppy; `1.0` = fully cable-straight when taut.
     pub straightness: f32,
     constraint_iterations: usize,
-    /// Draw each joint as a square in addition to the connecting lines.
-    pub show_debug: bool,
     color: Color,
+    /// Chain-link sprite sheet. Cloning is cheap (reference-counted texture).
+    sheet: SpriteSheet,
+    /// Sprite animation for the metallic link shimmer.
+    anim: Animation,
     /// Scratch buffer reused every frame to track which joints were moved by
     /// a distance constraint (avoids a heap allocation per update).
     was_constrained: Vec<bool>,
@@ -80,7 +83,15 @@ impl Chain {
     /// * `link_size` — size of each virtual link; determines segment count and
     ///   is also used as the visual line thickness.
     /// * `color` — tint used when drawing.
-    pub fn new(start: Vec2D, end: Vec2D, total_length: f32, link_size: f32, color: Color) -> Self {
+    /// * `sheet` — chain-link sprite sheet (64×64 frames).
+    pub fn new(
+        start: Vec2D,
+        end: Vec2D,
+        total_length: f32,
+        link_size: f32,
+        color: Color,
+        sheet: SpriteSheet,
+    ) -> Self {
         assert!(total_length > 0.0, "chain total_length must be positive");
         assert!(link_size > 0.0, "chain link_size must be positive");
 
@@ -95,6 +106,7 @@ impl Chain {
         }
 
         let n = joints.len();
+        let anim = Animation::new(sheet.clone(), 0, 8.0, true);
         Self {
             joints,
             segment_length,
@@ -102,8 +114,9 @@ impl Chain {
             damping: 0.025,
             straightness: 0.7,
             constraint_iterations: 20,
-            show_debug: true,
             color,
+            sheet,
+            anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
         }
@@ -116,13 +129,20 @@ impl Chain {
     /// ever drawn and straightened (via [`set_joint_positions`]), never
     /// simulated. `segment_length` should match the parent chain so the links
     /// render at a consistent size.
-    pub fn from_points(points: &[Vec2D], segment_length: f32, link_size: f32, color: Color) -> Self {
+    pub fn from_points(
+        points: &[Vec2D],
+        segment_length: f32,
+        link_size: f32,
+        color: Color,
+        sheet: SpriteSheet,
+    ) -> Self {
         assert!(points.len() >= 2, "a chain snippet needs at least two points");
         let joints: Vec<Joint> = points
             .iter()
             .map(|&p| Joint { pos: p, old_pos: p })
             .collect();
         let n = joints.len();
+        let anim = Animation::new(sheet.clone(), 0, 8.0, true);
         Self {
             joints,
             segment_length,
@@ -130,8 +150,9 @@ impl Chain {
             damping: 0.025,
             straightness: 0.7,
             constraint_iterations: 20,
-            show_debug: true,
             color,
+            sheet,
+            anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
         }
@@ -274,6 +295,9 @@ impl Chain {
         if n < 2 {
             return;
         }
+
+        // Advance the metallic link shimmer.
+        self.anim.update(dt);
 
         // ── 0. Re-establish the "outside all obstacles" invariant ─────────────
         //
@@ -497,33 +521,78 @@ impl Chain {
         }
     }
 
-    /// Draw the chain: thick lines between consecutive joints, and (when
-    /// [`show_debug`](Self::show_debug) is enabled) a square at each joint.
+    /// Draw the chain: a thin tinted line between joints plus a metallic link
+    /// sprite at each joint. The sprite frames are offset by joint index so the
+    /// metallic shimmer appears to travel along the chain.
     ///
     /// `alpha` scales the tint's opacity (`0.0`–`1.0`), used by the caller to
     /// fade longer chains behind the shorter ones stacked on top.
     pub fn draw(&self, canvas: &mut Canvas, alpha: f32) {
-        let color = self.color.with_alpha(alpha);
-        for i in 0..self.joints.len() - 1 {
-            canvas.line(
-                self.joints[i].pos,
-                self.joints[i + 1].pos,
-                self.link_size * 0.5,
-                color,
-            );
+        let n = self.joints.len();
+        if n < 2 {
+            return;
         }
 
-        if self.show_debug {
-            let half = self.link_size * 0.5;
-            for joint in &self.joints {
-                canvas.rectangle(
-                    joint.pos.x - half,
-                    joint.pos.y - half,
-                    self.link_size,
-                    self.link_size,
-                    color,
-                );
-            }
+        // Mix the chain colour with white so the metallic link keeps some of
+        // its base grey/silver look instead of becoming fully saturated.
+        let tint = mix_with_white(self.color, 0.35).with_alpha(alpha);
+
+        let frame_count = self.sheet.frame_count(0).max(1);
+        // Draw one link every few joints so the links are bigger and visibly
+        // separated from each other, while the physics simulation stays fine.
+        const DRAW_EVERY: usize = 2;
+        let scale = self.link_size * 3.0 / self.sheet.frame_width();
+        let half_dest = Vec2D::new(
+            self.sheet.frame_width() * scale * 0.5,
+            self.sheet.frame_height() * scale * 0.5,
+        );
+
+        let mut draw_index = 0usize;
+        let mut i = 0usize;
+        while i < n {
+            let joint = self.joints[i];
+            // Orient the link along the chain. Endpoints use their single
+            // neighbour; internal joints use the average of in/out directions.
+            let prev = if i == 0 { joint.pos } else { self.joints[i - 1].pos };
+            let next = if i == n - 1 { joint.pos } else { self.joints[i + 1].pos };
+            // `draw_texture_pro` takes rotation in degrees.
+            let rotation = (next - prev).to_angle().to_degrees();
+
+            // Offset the shimmer along the chain so adjacent drawn links show
+            // different frames and the effect travels as the animation advances.
+            let frame = (self.anim.current_frame() + draw_index) % frame_count;
+            let pos = joint.pos - half_dest;
+            self.sheet.draw_frame_rotated(
+                canvas,
+                frame as u32,
+                0,
+                pos,
+                scale,
+                rotation,
+                tint,
+            );
+
+            draw_index += 1;
+            i += DRAW_EVERY;
+        }
+
+        // Always draw the player-end link so the chain tip doesn't look empty.
+        let last = n - 1;
+        if last % DRAW_EVERY != 0 {
+            let joint = self.joints[last];
+            let prev = self.joints[last - 1].pos;
+            let rotation = (joint.pos - prev).to_angle().to_degrees();
+            let frame = (self.anim.current_frame() + draw_index) % frame_count;
+            let pos = joint.pos - half_dest;
+            self.sheet.draw_frame_rotated(
+                canvas,
+                frame as u32,
+                0,
+                pos,
+                scale,
+                rotation,
+                tint,
+            );
         }
     }
 
@@ -558,4 +627,15 @@ impl Chain {
             Rect::new(j.pos.x - half, j.pos.y - half, self.link_size, self.link_size)
         })
     }
+}
+
+/// Blend `color` toward white by `amount` (`0.0` = unchanged, `1.0` = white).
+fn mix_with_white(color: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    Color::new(
+        (color.r as f32 * (1.0 - t) + 255.0 * t) as u8,
+        (color.g as f32 * (1.0 - t) + 255.0 * t) as u8,
+        (color.b as f32 * (1.0 - t) + 255.0 * t) as u8,
+        color.a,
+    )
 }

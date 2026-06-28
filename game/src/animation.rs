@@ -55,6 +55,44 @@ impl SpriteSheet {
             self.frame_h,
         )
     }
+
+    /// Number of non-empty frames in `row`.
+    pub fn frame_count(&self, row: u32) -> usize {
+        self.frames_in_row(row).len()
+    }
+
+    /// Width of one frame cell, in texture pixels.
+    pub fn frame_width(&self) -> f32 {
+        self.frame_w
+    }
+
+    /// Height of one frame cell, in texture pixels.
+    pub fn frame_height(&self) -> f32 {
+        self.frame_h
+    }
+
+    /// Draw the frame at `(col, row)` with its top-left at `pos`, scaled by
+    /// `scale` and rotated by `rotation` radians around its centre.
+    pub fn draw_frame_rotated(
+        &self,
+        canvas: &mut Canvas,
+        col: u32,
+        row: u32,
+        pos: Vec2D,
+        scale: f32,
+        rotation: f32,
+        tint: Color,
+    ) {
+        let src = self.frame_rect(col, row);
+        let dest = Rect::new(
+            pos.x,
+            pos.y,
+            self.frame_w * scale,
+            self.frame_h * scale,
+        );
+        let origin = Vec2D::new(dest.width * 0.5, dest.height * 0.5);
+        canvas.draw_texture_pro(&self.texture, src, dest, origin, rotation, tint);
+    }
 }
 
 /// A timed playback of one state (row) of a [`SpriteSheet`].

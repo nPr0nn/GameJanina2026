@@ -156,6 +156,8 @@ pub struct Gameplay {
     /// `Portals` without needing the `Context` again.
     portal_purple: SpriteSheet,
     portal_green: SpriteSheet,
+    /// Chain-link sprite sheet. Stored here so `reset` can rebuild the chains.
+    chain_sheet: SpriteSheet,
     /// When `true`, the level's collision layer is drawn on top of the level
     /// (toggle with F3). Off by default — normal play shows only the sprites.
     debug_collisions: bool,
@@ -230,6 +232,12 @@ impl Gameplay {
             64,
             64,
         );
+        let chain_sheet = SpriteSheet::from_memory(
+            ctx,
+            include_bytes!("../assets/sprites/chain_link.png"),
+            64,
+            64,
+        );
         let level = load_level();
         let static_colliders = static_colliders_from(&level);
         let boxes = movable_boxes_from(&level);
@@ -249,7 +257,7 @@ impl Gameplay {
         });
 
         Self {
-            chains: new_chains(player.pos),
+            chains: new_chains(player.pos, chain_sheet.clone()),
             portals: Portals::new(portal_purple.clone(), portal_green.clone()),
             portals_restarting: false,
             crossing_exits: Vec::new(),
@@ -261,6 +269,7 @@ impl Gameplay {
             ducky,
             portal_purple,
             portal_green,
+            chain_sheet,
             debug_collisions: true,
             zoom: 3.0,
             fps: 0,
@@ -283,7 +292,7 @@ impl Gameplay {
     pub fn reset(&mut self) {
         self.player = Player::new(self.ducky.clone());
         self.player.pos = self.player_start;
-        self.chains = new_chains(self.player.pos);
+        self.chains = new_chains(self.player.pos, self.chain_sheet.clone());
         self.portals.start_closing_all();
         self.portals_restarting = true;
         self.crossing_exits.clear();
@@ -868,11 +877,11 @@ impl Gameplay {
 
 /// Build the three chains that tether the player to `CHAIN_ANCHOR`, each with a
 /// different length and tint, all starting at the player's spawn.
-fn new_chains(player_pos: Vec2D) -> Vec<PortalChain> {
+fn new_chains(player_pos: Vec2D, chain_sheet: SpriteSheet) -> Vec<PortalChain> {
     vec![
-        PortalChain::new(CHAIN_ANCHOR, player_pos, 1600.0, 3.0, RED),
-        PortalChain::new(CHAIN_ANCHOR, player_pos, 2400.0, 3.0, LIME),
-        PortalChain::new(CHAIN_ANCHOR, player_pos, 3200.0, 3.0, SKYBLUE),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 1600.0, 3.0, RED, chain_sheet.clone()),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 2400.0, 3.0, LIME, chain_sheet.clone()),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 3200.0, 3.0, SKYBLUE, chain_sheet.clone()),
     ]
 }
 
