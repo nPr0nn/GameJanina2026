@@ -33,6 +33,11 @@ const TAG_MOVABLE: &str = "mov";
 /// Boxes move freely while being pushed, then snap to the nearest cell once the
 /// player lets go — so accumulated float drift is erased every time one rests.
 const GRID_SIZE: f32 = 2.0;
+/// How far outside a box's face the player may stand and still "grab" it for
+/// pulling — the width of each box's extended border. Tuned to be a touch wider
+/// than the push resting gap so a box you just pushed can be pulled straight
+/// back.
+const PULL_REACH: f32 = 6.0;
 
 /// Snap a single world coordinate to the nearest [`GRID_SIZE`] line.
 fn snap_to_grid(v: f32) -> f32 {
@@ -58,6 +63,39 @@ fn snap_axis(v: f32, blocked_neg: bool, blocked_pos: bool) -> f32 {
     } else {
         hi
     }
+}
+
+/// Decide whether the player (rect `p`) is latched to box `b` for pulling.
+///
+/// Each box has an *extended border* of width `reach`: if the player is standing
+/// in that border just outside one face (overlapping the box on the other axis)
+/// and `disp` carries them outward along that face's normal, the box should
+/// trail along. Returns the outward unit normal to pull on, or `None`. When the
+/// player straddles a corner, the face most aligned with `disp` wins.
+fn pull_normal(p: Rect, b: Rect, disp: Vec2D, reach: f32) -> Option<Vec2D> {
+    // Overlap of player and box on each axis (>0 means they share that span).
+    let overlap_x = (p.x + p.width).min(b.x + b.width) - p.x.max(b.x);
+    let overlap_y = (p.y + p.height).min(b.y + b.height) - p.y.max(b.y);
+    // A hair of tolerance so the push resting gap (a `SKIN` overlap) still latches.
+    const TOL: f32 = 0.5;
+
+    // (gap from player to this face, overlap on the perpendicular axis, normal).
+    let faces = [
+        (b.x - (p.x + p.width), overlap_y, Vec2D::new(-1.0, 0.0)), // player left of box
+        (p.x - (b.x + b.width), overlap_y, Vec2D::new(1.0, 0.0)),  // player right of box
+        (b.y - (p.y + p.height), overlap_x, Vec2D::new(0.0, -1.0)), // player above box
+        (p.y - (b.y + b.height), overlap_x, Vec2D::new(0.0, 1.0)), // player below box
+    ];
+    let mut best: Option<(f32, Vec2D)> = None;
+    for (gap, perp, n) in faces {
+        if perp > 0.0 && (-TOL..=reach).contains(&gap) {
+            let dot = disp.dot(n);
+            if dot > 0.0 && best.is_none_or(|(d, _)| dot > d) {
+                best = Some((dot, n));
+            }
+        }
+    }
+    best.map(|(_, n)| n)
 }
 
 /// Clamp `v` so it never has the opposite sign of `want`: positive `want`
@@ -288,74 +326,109 @@ impl Gameplay {
         self.squeezables.extend_colliders(&mut self.move_colliders);
     }
 
-    /// Move the player by its velocity for this frame, resolved continuously
-    /// against the static world, then shove any movable box it ends up
-    /// overlapping. Each box is pushed only as far as the static world and the
-    /// other boxes permit; whatever it can't absorb (e.g. it's wedged against a
-    /// wall) is fed back onto the player so the player never ends up inside it.
+    /// Move the player by its velocity for this frame, resolved against the
+    /// static world, then run its box interactions: **push** (shove a box it
+    /// walks into) and **pull** (drag a box it's latched to and walks away from).
+    /// Both are gated by the player's abilities. Boxes not touched this frame are
+    /// settled onto the grid.
     fn move_player_and_push(&mut self, ctx: &Context) {
         let displacement = self.player.velocity * ctx.dt;
+        let old_pos = self.player.pos;
+
+        // Decide the pull *before* moving, from where the player stands relative
+        // to each box's extended border and the direction it's heading.
+        let pull = self.player.abilities.pull.then(|| self.find_pull(old_pos, displacement)).flatten();
+
+        // Move the player against the static world only (boxes excluded so it can
+        // push and pull them rather than collide).
         self.player.pos =
             resolve_aabb(self.player.pos, self.player.shape, displacement, &self.move_colliders);
 
-        // Which boxes the player is in contact with this frame. A box that's
-        // being touched moves freely (smooth pushing); the rest are settled onto
-        // the grid below.
+        // Which boxes are interacted with this frame; the rest snap to the grid.
         let mut touched = vec![false; self.boxes.len()];
+        let pull_idx = pull.map(|(i, _)| i);
 
-        for i in 0..self.boxes.len() {
-            let player_rect = Rect::new(
-                self.player.pos.x,
-                self.player.pos.y,
-                self.player.shape.x,
-                self.player.shape.y,
-            );
-            let box_rect = self.boxes[i].rect;
-            // Minimum translation that separates the box from the player; `want`
-            // points away from the player (roughly along the player's travel).
-            let Some((new_box_pos, _)) =
-                push_rect_out_of_aabb(box_rect.position(), box_rect.size(), player_rect)
-            else {
-                continue;
-            };
-            touched[i] = true;
-            let want = new_box_pos - box_rect.position();
+        // PUSH: shove any box the player walked into (excluding a box being pulled).
+        if self.player.abilities.push {
+            for i in 0..self.boxes.len() {
+                if Some(i) == pull_idx {
+                    continue;
+                }
+                let player_rect = self.player.collider();
+                let box_rect = self.boxes[i].rect;
+                // Minimum translation that separates the box from the player;
+                // `want` points away from the player (roughly along its travel).
+                let Some((new_box_pos, _)) =
+                    push_rect_out_of_aabb(box_rect.position(), box_rect.size(), player_rect)
+                else {
+                    continue;
+                };
+                touched[i] = true;
+                let want = new_box_pos - box_rect.position();
 
-            // The box may only move where the static world and the other boxes
-            // allow it to.
-            let obstacles = self.box_obstacles(i);
-            let resolved = resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
-            // Never let the box travel *against* the push. When it's already
-            // flush against a static, the swept resolver's skin clearance nudges
-            // it back a hair (away from the wall, into the player); unclamped
-            // that reads as the box drifting backwards when you shove it into a
-            // static. Clamp each axis to the sign of `want` so a blocked box
-            // simply stays put.
-            let raw = resolved - box_rect.position();
-            let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
-            self.move_box(i, moved);
+                // The box may only move where the static world and the other
+                // boxes allow it to.
+                let obstacles = self.box_obstacles(i);
+                let resolved = resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
+                // Never let the box travel *against* the push. When it's already
+                // flush against a static, the swept resolver's skin clearance
+                // nudges it back a hair (away from the wall, into the player);
+                // unclamped that reads as the box drifting backwards when you
+                // shove it into a static. Clamp each axis to the sign of `want`.
+                let raw = resolved - box_rect.position();
+                let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
+                self.move_box(i, moved);
 
-            // Push the player back by whatever separation the box couldn't take.
-            let residual = want - moved;
-            if residual.length_squared() > 1e-6 {
-                self.player.pos = resolve_aabb(
-                    self.player.pos,
-                    self.player.shape,
-                    -residual,
-                    &self.move_colliders,
-                );
+                // Push the player back by whatever separation the box couldn't take.
+                let residual = want - moved;
+                if residual.length_squared() > 1e-6 {
+                    self.player.pos = resolve_aabb(
+                        self.player.pos,
+                        self.player.shape,
+                        -residual,
+                        &self.move_colliders,
+                    );
+                }
+            }
+        }
+
+        // PULL: drag the latched box along by however far the player actually
+        // moved outward (it may be less than intended if a wall stopped it). The
+        // box trails at a constant gap, clamped by the static world / other boxes.
+        if let Some((i, normal)) = pull {
+            let outward = (self.player.pos - old_pos).dot(normal);
+            if outward > 0.0 {
+                let want = normal * outward;
+                let box_rect = self.boxes[i].rect;
+                let obstacles = self.box_obstacles(i);
+                let resolved =
+                    resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
+                let raw = resolved - box_rect.position();
+                let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
+                self.move_box(i, moved);
+                touched[i] = true;
             }
         }
 
         // Settle every box the player isn't touching onto the grid, so resting
-        // boxes always sit on exact 4-pixel coordinates and never accumulate the
+        // boxes always sit on exact grid coordinates and never accumulate the
         // float drift of repeated free-coordinate pushes. Boxes in contact are
-        // left alone so snapping never fights the player mid-push.
+        // left alone so snapping never fights the player mid-interaction.
         for i in 0..self.boxes.len() {
             if !touched[i] {
                 self.snap_box(i);
             }
         }
+    }
+
+    /// Find the first box the player (top-left `pos`) is latched to for pulling
+    /// this frame, given the intended `displacement`. Returns `(box index,
+    /// outward normal)` — see [`pull_normal`].
+    fn find_pull(&self, pos: Vec2D, displacement: Vec2D) -> Option<(usize, Vec2D)> {
+        let player_rect = Rect::new(pos.x, pos.y, self.player.shape.x, self.player.shape.y);
+        self.boxes.iter().enumerate().find_map(|(i, b)| {
+            pull_normal(player_rect, b.rect, displacement, PULL_REACH).map(|n| (i, n))
+        })
     }
 
     /// Settle box `i` onto the grid, clamped by the static world and the other
@@ -520,6 +593,43 @@ impl Gameplay {
         }
     }
 
+    /// Draw the sprite instances and the player interleaved by depth: each
+    /// entity is keyed by the world-Y of its bottom edge, and they're painted
+    /// from smallest key (furthest back) to largest (frontmost). The player's
+    /// key is the bottom of its hit box; a sprite's is the bottom of its image.
+    fn draw_y_sorted(&self, canvas: &mut Canvas) {
+        // (depth key, what to draw). `Player` is `None`.
+        let mut order: Vec<(f32, Option<usize>)> =
+            Vec::with_capacity(self.level.sprite_instances.len() + 1);
+        for (i, inst) in self.level.sprite_instances.iter().enumerate() {
+            let height = self
+                .sprite_textures
+                .get(&inst.path)
+                .map_or(0.0, |t| t.height() as f32);
+            order.push((inst.y + height * inst.scale, Some(i)));
+        }
+        order.push((self.player.pos.y + self.player.shape.y, None));
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        for (_, item) in order {
+            match item {
+                Some(i) => {
+                    let inst = &self.level.sprite_instances[i];
+                    if let Some(tex) = self.sprite_textures.get(&inst.path) {
+                        canvas.draw_texture_ex(
+                            tex,
+                            Vec2D::new(inst.x, inst.y),
+                            0.0,
+                            inst.scale,
+                            WHITE,
+                        );
+                    }
+                }
+                None => self.player.draw(canvas),
+            }
+        }
+    }
+
     pub fn draw(&self, canvas: &mut Canvas) {
         canvas.clear_background(BLACK);
 
@@ -532,17 +642,15 @@ impl Gameplay {
         };
         canvas.begin_mode_2d(camera);
 
-        // Sprite instances authored in the editor (the actual PNGs), drawn at
-        // their top-left world position and scale — the same call the editor
-        // uses, so they land pixel-identically. Drawn first, as the background.
-        for inst in &self.level.sprite_instances {
-            if let Some(tex) = self.sprite_textures.get(&inst.path) {
-                canvas.draw_texture_ex(tex, Vec2D::new(inst.x, inst.y), 0.0, inst.scale, WHITE);
-            }
-        }
-
-        // The sprite-planning layer's placeholder shapes authored in the editor.
+        // The sprite-planning layer's placeholder shapes authored in the editor,
+        // drawn as the flat background beneath the Y-sorted entities.
         self.level.draw(canvas);
+
+        // Y-sorted entities: the editor's sprite instances (the actual PNGs) and
+        // the player, drawn back-to-front by the Y of their bottom edge ("feet").
+        // An entity whose feet are lower on the map draws in front, so the player
+        // walks behind sprites above them and in front of sprites below them.
+        self.draw_y_sorted(canvas);
 
         // Debug view: overlay the level's collision layer (translucent so the
         // sprites underneath stay visible). Off during normal play.
@@ -558,8 +666,19 @@ impl Gameplay {
                 shape.with_alpha(0.4).draw(canvas);
             }
             // ...and the movable boxes at their *current* positions, tinted
-            // differently so the two kinds are easy to tell apart.
+            // differently so the two kinds are easy to tell apart. The faint
+            // outer ring is the extended pull border (reach the player can grab
+            // the box from), shown only when the pull ability is unlocked.
             for b in &self.boxes {
+                if self.player.abilities.pull {
+                    canvas.rectangle(
+                        b.rect.x - PULL_REACH,
+                        b.rect.y - PULL_REACH,
+                        b.rect.width + 2.0 * PULL_REACH,
+                        b.rect.height + 2.0 * PULL_REACH,
+                        SKYBLUE.with_alpha(0.12),
+                    );
+                }
                 canvas.rectangle(
                     b.rect.x,
                     b.rect.y,
@@ -581,7 +700,6 @@ impl Gameplay {
         }
         canvas.circle(CHAIN_ANCHOR, 6.0, GOLD);
 
-        self.player.draw(canvas);
         canvas.end_mode_2d();
 
         canvas.text(&self.loc.fps(self.fps), 20.0, 20.0, 28.0, LIME);
