@@ -6,6 +6,10 @@
 // Middle-drag pans; wheel zooms. Tab cycles between three layers:
 //   Sprite → Collision → Classification
 //
+// Sprite layer: Shift+L loads/replaces a spritesheet/tileset PNG. L toggles the sheet
+// panel. Drag to select a tile, release to cut it into sprites/, then hide the panel
+// with L and click in the world to place.
+//
 // In the Classification layer:
 //   Arrows  navigate objects
 //   Enter   edit the focused object's tag
@@ -13,6 +17,7 @@
 //   Tab     (while editing a tag) cycle through existing tags
 //   Delete  clear the tag on the focused object
 
+use image::GenericImageView;
 use juni::prelude::*;
 use std::collections::HashMap;
 use std::{
@@ -87,6 +92,31 @@ enum DragAction {
     NewShape,
     /// Dragging to redefine the geometry of an already-selected shape.
     RedrawShape(usize),
+}
+
+/// A loaded spritesheet/tileset image used to cut new sprite tiles.
+struct SpriteSheet {
+    /// Path the sheet was loaded from.
+    path: String,
+    /// GPU texture for rendering the sheet in the UI panel.
+    texture: Texture,
+    /// Original image width in pixels.
+    width: u32,
+    /// Original image height in pixels.
+    height: u32,
+}
+
+/// Screen-space geometry of the sheet preview panel.
+struct SheetPanel {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    /// Scale from sheet pixels to screen pixels.
+    scale: f32,
+    /// Offset of the scaled image inside the panel, centered.
+    offset_x: f32,
+    offset_y: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -168,6 +198,19 @@ struct Editor {
     selected_sprite: Option<usize>,
     sprite_scale: f32,
     sprite_cache: HashMap<String, Texture>,
+    // --- Spritesheet/tileset cutter ---
+    /// A loaded spritesheet for cutting tiles.
+    sprite_sheet: Option<SpriteSheet>,
+    /// Whether the sheet cutter panel is currently visible.
+    sheet_panel_open: bool,
+    /// Pixel selection inside the current sheet (`None` = no confirmed selection).
+    sheet_selection: Option<Rect>,
+    /// Drag start in sheet pixel coordinates while the user is selecting a region.
+    sheet_drag_start: Option<Vec2D>,
+    /// Buffer for typing a spritesheet path.
+    sheet_path_input: String,
+    /// Whether the user is currently typing a sheet path.
+    entering_sheet_path: bool,
     // --- Classification layer ---
     /// tag string → display color
     tag_colors: HashMap<String, Color>,
@@ -193,6 +236,23 @@ impl Editor {
                     .unwrap_or(p.as_str())
             })
             .unwrap_or("none")
+    }
+
+    /// Ensure `path` is in `available_sprites` and `sprite_cache`, then select it.
+    fn select_sprite_by_path(&mut self, ctx: &mut Context, path: String) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.sprite_cache.entry(path.clone())
+        {
+            if let Ok(tex) = ctx.load_texture(&path) {
+                e.insert(tex);
+            }
+        }
+        if let Some(i) = self.available_sprites.iter().position(|p| p == &path) {
+            self.selected_sprite = Some(i);
+        } else {
+            self.available_sprites.push(path.clone());
+            self.available_sprites.sort();
+            self.selected_sprite = self.available_sprites.iter().position(|p| p == &path);
+        }
     }
 
     /// Bounding rect `(x, y, w, h)` for a sprite instance.
@@ -486,6 +546,176 @@ fn draw_rect_outline(canvas: &mut Canvas, x: f32, y: f32, w: f32, h: f32, t: f32
     canvas.line(Vec2D::new(x, y + h), Vec2D::new(x, y), t, c);
 }
 
+/// Collect characters suitable for typing a file path: letters, digits, and
+/// common path separators/punctuation. Letters are lowercase unless `shift`.
+fn collect_path_chars(ctx: &Context, shift: bool) -> String {
+    let mut s = String::new();
+    for &(key, lo, hi) in &[
+        (Key::A, 'a', 'A'),
+        (Key::B, 'b', 'B'),
+        (Key::C, 'c', 'C'),
+        (Key::D, 'd', 'D'),
+        (Key::E, 'e', 'E'),
+        (Key::F, 'f', 'F'),
+        (Key::G, 'g', 'G'),
+        (Key::H, 'h', 'H'),
+        (Key::I, 'i', 'I'),
+        (Key::J, 'j', 'J'),
+        (Key::K, 'k', 'K'),
+        (Key::L, 'l', 'L'),
+        (Key::M, 'm', 'M'),
+        (Key::N, 'n', 'N'),
+        (Key::O, 'o', 'O'),
+        (Key::P, 'p', 'P'),
+        (Key::Q, 'q', 'Q'),
+        (Key::R, 'r', 'R'),
+        (Key::S, 's', 'S'),
+        (Key::T, 't', 'T'),
+        (Key::U, 'u', 'U'),
+        (Key::V, 'v', 'V'),
+        (Key::W, 'w', 'W'),
+        (Key::X, 'x', 'X'),
+        (Key::Y, 'y', 'Y'),
+        (Key::Z, 'z', 'Z'),
+        (Key::Num0, '0', ')'),
+        (Key::Num1, '1', '!'),
+        (Key::Num2, '2', '@'),
+        (Key::Num3, '3', '#'),
+        (Key::Num4, '4', '$'),
+        (Key::Num5, '5', '%'),
+        (Key::Num6, '6', '^'),
+        (Key::Num7, '7', '&'),
+        (Key::Num8, '8', '*'),
+        (Key::Num9, '9', '('),
+        (Key::Space, ' ', ' '),
+        (Key::Minus, '-', '_'),
+        (Key::Period, '.', '>'),
+        (Key::Comma, ',', '<'),
+        (Key::Slash, '/', '?'),
+        (Key::Backslash, '\\', '|'),
+        (Key::Semicolon, ';', ':'),
+        (Key::Apostrophe, '\'', '"'),
+        (Key::Equal, '=', '+'),
+        (Key::BracketLeft, '[', '{'),
+        (Key::BracketRight, ']', '}'),
+        (Key::Grave, '`', '~'),
+    ] {
+        if ctx.is_key_pressed(key) {
+            s.push(if shift { hi } else { lo });
+        }
+    }
+    s
+}
+
+/// Compute the screen-space panel for a loaded spritesheet preview.
+/// Uses a large centered modal so big spritesheets/tilesets remain readable.
+fn sheet_panel_rect(sheet_w: u32, sheet_h: u32) -> SheetPanel {
+    const MAX_W: f32 = 1000.0;
+    const MAX_H: f32 = 600.0;
+    const PADDING: f32 = 40.0;
+    let x = (RENDER_W as f32 - MAX_W) * 0.5;
+    let y = (RENDER_H as f32 - MAX_H) * 0.5;
+    let avail_w = MAX_W - 2.0 * PADDING;
+    let avail_h = MAX_H - 2.0 * PADDING;
+    let scale = (avail_w / sheet_w as f32).min(avail_h / sheet_h as f32);
+    let img_w = sheet_w as f32 * scale;
+    let img_h = sheet_h as f32 * scale;
+    let offset_x = (MAX_W - img_w) * 0.5;
+    let offset_y = (MAX_H - img_h) * 0.5;
+    SheetPanel {
+        x,
+        y,
+        w: MAX_W,
+        h: MAX_H,
+        scale,
+        offset_x,
+        offset_y,
+    }
+}
+
+/// Convert a screen-space mouse position into sheet pixel coordinates relative
+/// to the panel. Returns `None` if the mouse is outside the scaled image.
+fn sheet_mouse_pos(panel: &SheetPanel, mouse: Vec2D) -> Option<Vec2D> {
+    let local_x = mouse.x - panel.x - panel.offset_x;
+    let local_y = mouse.y - panel.y - panel.offset_y;
+    if local_x < 0.0 || local_y < 0.0 {
+        return None;
+    }
+    let sx = local_x / panel.scale;
+    let sy = local_y / panel.scale;
+    Some(Vec2D::new(sx, sy))
+}
+
+/// Convert a sheet-pixel rectangle to screen-space coordinates inside the panel.
+fn sheet_rect_to_panel(panel: &SheetPanel, rect: Rect) -> Rect {
+    Rect::new(
+        panel.x + panel.offset_x + rect.x * panel.scale,
+        panel.y + panel.offset_y + rect.y * panel.scale,
+        rect.width * panel.scale,
+        rect.height * panel.scale,
+    )
+}
+
+/// Build a normalized rectangle from two corner points.
+fn rect_from_points(a: Vec2D, b: Vec2D) -> Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    let width = (a.x - b.x).abs();
+    let height = (a.y - b.y).abs();
+    Rect::new(x, y, width, height)
+}
+
+/// Clamp a rectangle to lie within `(0,0..max_w,max_h)` and have positive size.
+fn clamp_rect(rect: Rect, max_w: u32, max_h: u32) -> Rect {
+    let x = rect.x.clamp(0.0, max_w as f32);
+    let y = rect.y.clamp(0.0, max_h as f32);
+    let width = (rect.width.min(max_w as f32 - x)).max(1.0);
+    let height = (rect.height.min(max_h as f32 - y)).max(1.0);
+    Rect::new(x, y, width, height)
+}
+
+/// Crop the selected region from `sheet_path` and save it as a new PNG in
+/// `sprites_dir`. Returns the path of the newly-created sprite file.
+fn crop_and_save_sprite(
+    sheet_path: &str,
+    selection: Rect,
+    sprites_dir: &str,
+) -> std::io::Result<String> {
+    use image::GenericImageView;
+
+    let img = image::open(sheet_path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let x = selection.x as u32;
+    let y = selection.y as u32;
+    let w = selection.width as u32;
+    let h = selection.height as u32;
+    let cropped = img.view(x, y, w, h).to_image();
+
+    let base = Path::new(sheet_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("sheet");
+    std::fs::create_dir_all(sprites_dir)?;
+
+    let mut counter = 0;
+    let out_path = loop {
+        let name = if counter == 0 {
+            format!("{base}_{x}_{y}_{w}_{h}.png")
+        } else {
+            format!("{base}_{x}_{y}_{w}_{h}_{counter}.png")
+        };
+        let full = Path::new(sprites_dir).join(&name);
+        if !full.exists() {
+            break full;
+        }
+        counter += 1;
+    };
+
+    cropped.save(&out_path).map_err(std::io::Error::other)?;
+
+    Ok(out_path.to_string_lossy().replace('\\', "/"))
+}
+
 /// Collect all printable characters pressed this frame (letters, digits, space,
 /// comma, period). Letters are lowercase unless `shift` is true.
 fn collect_typed_chars(ctx: &Context, shift: bool) -> String {
@@ -673,6 +903,12 @@ impl Game for Editor {
             selected_sprite,
             sprite_scale: 1.0,
             sprite_cache,
+            sprite_sheet: None,
+            sheet_panel_open: false,
+            sheet_selection: None,
+            sheet_drag_start: None,
+            sheet_path_input: String::new(),
+            entering_sheet_path: false,
             tag_colors,
             focused_object: None,
             editing_object: None,
@@ -972,8 +1208,165 @@ impl Game for Editor {
         // ================================================================
         // SPRITE / COLLISION LAYERS: tools, picker, placement
         // ================================================================
-        let placing_sprite =
-            self.active_layer == Layer::SpritePlanning && self.selected_sprite.is_some();
+
+        // --- Spritesheet / tileset cutter (sprite layer only) ---
+        if self.active_layer == Layer::SpritePlanning {
+            // Path input mode: type a PNG path, Enter loads it, Esc cancels.
+            if self.entering_sheet_path {
+                let shift = ctx.is_key_down(Key::LeftShift) || ctx.is_key_down(Key::RightShift);
+                let typed = collect_path_chars(ctx, shift);
+                if !typed.is_empty() {
+                    self.sheet_path_input.push_str(&typed);
+                }
+                if ctx.is_key_pressed(Key::Backspace) {
+                    self.sheet_path_input.pop();
+                }
+                if ctx.is_key_pressed(Key::Escape) {
+                    self.entering_sheet_path = false;
+                    self.sheet_path_input.clear();
+                    self.status = "Sheet load cancelled".to_string();
+                }
+                if ctx.is_key_pressed(Key::Enter) {
+                    let path = self.sheet_path_input.trim().to_string();
+                    self.entering_sheet_path = false;
+                    self.sheet_path_input.clear();
+                    if path.is_empty() {
+                        self.status = "Sheet load cancelled".to_string();
+                    } else {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => {
+                                let texture = ctx.load_texture_from_memory(&bytes);
+                                match image::load_from_memory(&bytes) {
+                                    Ok(img) => {
+                                        let (w, h) = img.dimensions();
+                                        self.sprite_sheet = Some(SpriteSheet {
+                                            path,
+                                            texture,
+                                            width: w,
+                                            height: h,
+                                        });
+                                        self.sheet_panel_open = true;
+                                        self.sheet_selection = None;
+                                        self.sheet_drag_start = None;
+                                        self.status =
+                                            format!("Loaded sheet {w}x{h}; drag to cut a tile");
+                                    }
+                                    Err(e) => {
+                                        self.status = format!("Failed to decode sheet: {e}");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.status = format!("Failed to read sheet: {e}");
+                            }
+                        }
+                    }
+                }
+                // Swallow all other input while typing a sheet path.
+                return;
+            }
+
+            // L toggles the loaded sheet panel. Shift+L always loads/replaces.
+            let shift = ctx.is_key_down(Key::LeftShift) || ctx.is_key_down(Key::RightShift);
+            if ctx.is_key_pressed(Key::L) {
+                if shift {
+                    self.entering_sheet_path = true;
+                    self.sheet_path_input.clear();
+                    self.status = "Type sheet path, Enter=load, Esc=cancel".to_string();
+                } else if let Some(sheet) = &self.sprite_sheet {
+                    self.sheet_panel_open = !self.sheet_panel_open;
+                    self.status = if self.sheet_panel_open {
+                        format!(
+                            "Sheet shown ({}x{}); drag to cut a tile",
+                            sheet.width, sheet.height
+                        )
+                    } else {
+                        "Sheet hidden".to_string()
+                    };
+                } else {
+                    self.entering_sheet_path = true;
+                    self.sheet_path_input.clear();
+                    self.status = "Type sheet path, Enter=load, Esc=cancel".to_string();
+                }
+            }
+
+            // Sheet panel interaction (only when panel is visible).
+            if self.sheet_panel_open {
+                let mut unload_sheet = false;
+                if let Some(sheet) = &self.sprite_sheet {
+                    let panel = sheet_panel_rect(sheet.width, sheet.height);
+
+                    // Cancel selection/drag with Esc, or hide panel on second Esc.
+                    if ctx.is_key_pressed(Key::Escape) {
+                        if self.sheet_drag_start.take().is_some()
+                            || self.sheet_selection.take().is_some()
+                        {
+                            self.status = "Sheet selection cancelled".to_string();
+                        } else {
+                            self.sheet_panel_open = false;
+                            self.status = "Sheet hidden".to_string();
+                        }
+                    }
+
+                    // Delete unloads the current sheet from the editor.
+                    if ctx.is_key_pressed(Key::Delete) {
+                        unload_sheet = true;
+                        self.status = "Sheet unloaded".to_string();
+                    }
+
+                    // Mouse interaction only when cursor is inside the scaled image.
+                    if let Some(sheet_pos) = sheet_mouse_pos(&panel, self.mouse) {
+                        let current = Vec2D::new(
+                            sheet_pos.x.clamp(0.0, sheet.width as f32),
+                            sheet_pos.y.clamp(0.0, sheet.height as f32),
+                        );
+
+                        if ctx.is_mouse_button_pressed(MouseButton::Left) {
+                            self.sheet_drag_start = Some(current);
+                            self.sheet_selection = None;
+                        }
+
+                        if ctx.is_mouse_button_released(MouseButton::Left) {
+                            if let Some(start) = self.sheet_drag_start.take() {
+                                let selection = clamp_rect(
+                                    rect_from_points(start, current),
+                                    sheet.width,
+                                    sheet.height,
+                                );
+                                if selection.width >= 1.0 && selection.height >= 1.0 {
+                                    match crop_and_save_sprite(&sheet.path, selection, "sprites") {
+                                        Ok(out_path) => {
+                                            self.select_sprite_by_path(ctx, out_path);
+                                            self.sheet_selection = None;
+                                            self.status = format!(
+                                                "Cut '{}'; hide sheet (L) to place",
+                                                self.selected_sprite_name()
+                                            );
+                                            self.is_dirty = true;
+                                            self.refresh_window_title(ctx);
+                                        }
+                                        Err(e) => {
+                                            self.status = format!("Cut failed: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if unload_sheet {
+                    self.sprite_sheet = None;
+                    self.sheet_panel_open = false;
+                    self.sheet_selection = None;
+                    self.sheet_drag_start = None;
+                }
+            }
+        }
+
+        let sheet_open = self.active_layer == Layer::SpritePlanning && self.sheet_panel_open;
+        let placing_sprite = self.active_layer == Layer::SpritePlanning
+            && self.selected_sprite.is_some()
+            && !sheet_open;
 
         if !placing_sprite && self.active_layer != Layer::ClassificationPlanning {
             if ctx.is_key_pressed(Key::R) {
@@ -1063,7 +1456,7 @@ impl Game for Editor {
                     self.status = format!("Placed sprite ({count} total)");
                 }
             }
-        } else if self.active_layer != Layer::ClassificationPlanning {
+        } else if self.active_layer != Layer::ClassificationPlanning && !sheet_open {
             if ctx.is_mouse_button_pressed(MouseButton::Left) {
                 let active_shapes = self.active_shapes();
                 if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
@@ -1123,6 +1516,7 @@ impl Game for Editor {
         // Right click: delete
         if ctx.is_mouse_button_pressed(MouseButton::Right)
             && self.active_layer != Layer::ClassificationPlanning
+            && !sheet_open
         {
             let mut deleted = false;
             if self.active_layer == Layer::SpritePlanning {
@@ -1162,26 +1556,40 @@ impl Game for Editor {
             }
         }
 
-        // Delete / Backspace: remove selected shape (sprite + collision only)
+        // Delete / Backspace: remove sprite under cursor (sprite layer) or selected shape.
         // Backspace is included because on macOS the key labelled Delete sends
         // Backspace; the true Delete key is Fn+Delete.
         if self.active_layer != Layer::ClassificationPlanning
+            && !sheet_open
             && (ctx.is_key_pressed(Key::Delete) || ctx.is_key_pressed(Key::Backspace))
         {
-            if let Some(i) = self.selected_shape.take() {
-                let active_shapes = self.active_shapes_mut();
-                if i < active_shapes.len() {
-                    active_shapes.remove(i);
-                    let count = active_shapes.len();
+            let mut handled = false;
+            if self.active_layer == Layer::SpritePlanning {
+                if let Some(i) = self.sprite_at(world) {
+                    self.level.sprite_instances.remove(i);
+                    let count = self.level.sprite_instances.len();
                     self.is_dirty = true;
                     self.refresh_window_title(ctx);
-                    self.status = format!("Deleted selected shape ({count} left)");
+                    self.status = format!("Deleted sprite ({count} left)");
+                    handled = true;
+                }
+            }
+            if !handled {
+                if let Some(i) = self.selected_shape.take() {
+                    let active_shapes = self.active_shapes_mut();
+                    if i < active_shapes.len() {
+                        active_shapes.remove(i);
+                        let count = active_shapes.len();
+                        self.is_dirty = true;
+                        self.refresh_window_title(ctx);
+                        self.status = format!("Deleted selected shape ({count} left)");
+                    }
                 }
             }
         }
 
         // Z/X undo / clear (sprite + collision only)
-        if self.active_layer != Layer::ClassificationPlanning {
+        if self.active_layer != Layer::ClassificationPlanning && !sheet_open {
             if ctx.is_key_pressed(Key::Z) {
                 let undone = if self.active_layer == Layer::SpritePlanning
                     && !self.level.sprite_instances.is_empty()
@@ -1519,7 +1927,7 @@ impl Game for Editor {
 
         // ---- HUD: sprite picker ----
         if self.active_layer == Layer::SpritePlanning {
-            canvas.rectangle(20.0, 168.0, 340.0, 104.0, BLACK.with_alpha(0.8));
+            canvas.rectangle(20.0, 168.0, 340.0, 132.0, BLACK.with_alpha(0.8));
             if self.available_sprites.is_empty() {
                 canvas.text("No sprites in sprites/", 40.0, 200.0, 20.0, LIGHTGRAY);
             } else {
@@ -1539,6 +1947,10 @@ impl Game for Editor {
                 canvas.text("half/double", 220.0, 222.0, 18.0, LIGHTGRAY);
                 canvas.text("Click to place", 40.0, 252.0, 20.0, LIGHTGRAY);
             }
+            canvas.text("L", 40.0, 282.0, 20.0, GOLD);
+            canvas.text("show/hide", 68.0, 282.0, 20.0, LIGHTGRAY);
+            canvas.text("Shift+L", 150.0, 282.0, 20.0, GOLD);
+            canvas.text("load/replace", 238.0, 282.0, 20.0, LIGHTGRAY);
         }
 
         // ---- HUD: classification tag legend + hints ----
@@ -1609,7 +2021,7 @@ impl Game for Editor {
                 LIGHTGRAY,
             );
             canvas.text(
-                "Del / Bksp    Delete selected shape",
+                "Del / Bksp    Delete sprite under cursor / selected shape",
                 60.0,
                 438.0,
                 19.0,
@@ -1623,20 +2035,27 @@ impl Game for Editor {
 
             canvas.text("Sprites (sprite layer)", 40.0, 560.0, 22.0, WHITE);
             canvas.text("[ ]  cycle    , .  scale", 60.0, 582.0, 19.0, LIGHTGRAY);
-
-            canvas.text("Classification layer", 40.0, 610.0, 22.0, WHITE);
             canvas.text(
-                "Arrows  navigate    Enter  edit tag",
+                "L show/hide  Shift+L load/replace  Del unload  drag=cut",
                 60.0,
-                632.0,
+                604.0,
                 19.0,
                 LIGHTGRAY,
             );
-            canvas.text("I  edit ID    Del  clear tag", 60.0, 652.0, 19.0, LIGHTGRAY);
+
+            canvas.text("Classification layer", 40.0, 632.0, 22.0, WHITE);
+            canvas.text(
+                "Arrows  navigate    Enter  edit tag",
+                60.0,
+                654.0,
+                19.0,
+                LIGHTGRAY,
+            );
+            canvas.text("I  edit ID    Del  clear tag", 60.0, 674.0, 19.0, LIGHTGRAY);
             canvas.text(
                 "Tab (in edit)  cycle existing tags",
                 60.0,
-                672.0,
+                694.0,
                 19.0,
                 LIGHTGRAY,
             );
@@ -1652,6 +2071,113 @@ impl Game for Editor {
             canvas.text("F    Reset view", 330.0, 510.0, 19.0, LIGHTGRAY);
             canvas.text("H    Toggle help", 330.0, 532.0, 19.0, LIGHTGRAY);
             canvas.text("Esc  Quit / cancel", 330.0, 554.0, 19.0, LIGHTGRAY);
+        }
+
+        // ---- Sheet cutter panel (modal, on top of HUD) ----
+        if self.sheet_panel_open {
+            if let Some(sheet) = &self.sprite_sheet {
+                let panel = sheet_panel_rect(sheet.width, sheet.height);
+
+                // Dim the rest of the UI to focus on the sheet.
+                canvas.rectangle(
+                    0.0,
+                    0.0,
+                    RENDER_W as f32,
+                    RENDER_H as f32,
+                    BLACK.with_alpha(0.45),
+                );
+
+                // Panel background
+                canvas.rectangle(panel.x, panel.y, panel.w, panel.h, BLACK.with_alpha(0.92));
+                draw_rect_outline(canvas, panel.x, panel.y, panel.w, panel.h, 2.0, GOLD);
+
+                // Title
+                canvas.text(
+                    "Spritesheet / tileset — drag to select a tile",
+                    panel.x + 16.0,
+                    panel.y + 24.0,
+                    22.0,
+                    GOLD,
+                );
+
+                // Scaled sheet image
+                let dest = Rect::new(
+                    panel.x + panel.offset_x,
+                    panel.y + panel.offset_y,
+                    sheet.width as f32 * panel.scale,
+                    sheet.height as f32 * panel.scale,
+                );
+                canvas.draw_texture_pro(
+                    &sheet.texture,
+                    Rect::new(0.0, 0.0, sheet.width as f32, sheet.height as f32),
+                    dest,
+                    Vec2D::ZERO,
+                    0.0,
+                    WHITE,
+                );
+
+                // Confirmed selection outline
+                if let Some(sel) = self.sheet_selection {
+                    let r = sheet_rect_to_panel(&panel, sel);
+                    draw_rect_outline(canvas, r.x, r.y, r.width, r.height, 2.0, GREEN);
+                }
+
+                // In-progress drag preview
+                if let (Some(start), Some(sheet_pos)) =
+                    (self.sheet_drag_start, sheet_mouse_pos(&panel, self.mouse))
+                {
+                    let current = Vec2D::new(
+                        sheet_pos.x.clamp(0.0, sheet.width as f32),
+                        sheet_pos.y.clamp(0.0, sheet.height as f32),
+                    );
+                    let preview =
+                        clamp_rect(rect_from_points(start, current), sheet.width, sheet.height);
+                    let r = sheet_rect_to_panel(&panel, preview);
+                    draw_rect_outline(canvas, r.x, r.y, r.width, r.height, 1.0, YELLOW);
+                }
+
+                // Hint label inside the panel footer
+                canvas.text(
+                    "Drag=select  Release=cut  Esc=close  Del=unload",
+                    panel.x + 16.0,
+                    panel.y + panel.h - 18.0,
+                    16.0,
+                    LIGHTGRAY,
+                );
+            }
+        }
+
+        // Path input overlay
+        if self.entering_sheet_path {
+            canvas.rectangle(
+                0.0,
+                0.0,
+                RENDER_W as f32,
+                RENDER_H as f32,
+                BLACK.with_alpha(0.6),
+            );
+            let box_w = 760.0;
+            let box_h = 120.0;
+            let box_x = (RENDER_W as f32 - box_w) * 0.5;
+            let box_y = (RENDER_H as f32 - box_h) * 0.5;
+            canvas.rectangle(box_x, box_y, box_w, box_h, DARKGRAY);
+            draw_rect_outline(canvas, box_x, box_y, box_w, box_h, 2.0, GOLD);
+            canvas.text(
+                "Load spritesheet / tileset",
+                box_x + 20.0,
+                box_y + 16.0,
+                24.0,
+                GOLD,
+            );
+            let prompt = format!("{}|", self.sheet_path_input);
+            canvas.text(&prompt, box_x + 20.0, box_y + 60.0, 22.0, WHITE);
+            canvas.text(
+                "Enter=load  Esc=cancel",
+                box_x + 20.0,
+                box_y + 94.0,
+                18.0,
+                LIGHTGRAY,
+            );
         }
 
         canvas.text(&self.status, 20.0, RENDER_H as f32 - 32.0, 22.0, GOLD);
@@ -1762,4 +2288,77 @@ fn main() {
         msaa: 4,
         ..Config::default()
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Rgba;
+
+    #[test]
+    fn crop_and_save_sprite_cuts_a_region() {
+        let tmp = std::env::temp_dir().join("juni_editor_sheet_test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let sheet_path = tmp.join("sheet.png");
+        let sprites_dir = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites_dir).unwrap();
+
+        // 4x4 checkerboard: red, green, blue, yellow quadrants.
+        let mut img = image::RgbaImage::new(4, 4);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = match (x / 2, y / 2) {
+                (0, 0) => Rgba([255, 0, 0, 255]),
+                (1, 0) => Rgba([0, 255, 0, 255]),
+                (0, 1) => Rgba([0, 0, 255, 255]),
+                _ => Rgba([255, 255, 0, 255]),
+            };
+        }
+        img.save(&sheet_path).unwrap();
+
+        let selection = Rect::new(0.0, 0.0, 2.0, 2.0);
+        let out_path = crop_and_save_sprite(
+            sheet_path.to_str().unwrap(),
+            selection,
+            sprites_dir.to_str().unwrap(),
+        )
+        .unwrap();
+
+        assert!(std::path::Path::new(&out_path).exists());
+        let cropped = image::open(&out_path).unwrap();
+        let (w, h) = cropped.dimensions();
+        assert_eq!(w, 2);
+        assert_eq!(h, 2);
+
+        // Top-left pixel of the cropped region should be red.
+        assert_eq!(cropped.get_pixel(0, 0), Rgba([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn sheet_panel_rect_fits_large_sheet_inside_max_size() {
+        let panel = sheet_panel_rect(2048, 1024);
+        assert!(panel.w <= 1000.0);
+        assert!(panel.h <= 600.0);
+        let img_w = 2048.0 * panel.scale;
+        let img_h = 1024.0 * panel.scale;
+        assert!(img_w <= 1000.0 - 80.0);
+        assert!(img_h <= 600.0 - 80.0);
+    }
+
+    #[test]
+    fn sheet_panel_rect_upscales_small_sheet() {
+        let panel = sheet_panel_rect(4, 4);
+        assert!(panel.scale >= 1.0);
+    }
+
+    #[test]
+    fn clamp_rect_keeps_selection_inside_image() {
+        let rect = Rect::new(-5.0, -5.0, 100.0, 100.0);
+        let clamped = clamp_rect(rect, 16, 16);
+        assert_eq!(clamped.x, 0.0);
+        assert_eq!(clamped.y, 0.0);
+        assert_eq!(clamped.width, 16.0);
+        assert_eq!(clamped.height, 16.0);
+    }
 }

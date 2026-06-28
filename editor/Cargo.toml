@@ -11,3 +11,5 @@ path = "src/main.rs"
 # The same engine the game uses. The editor is a native desktop tool that
 # writes the level file `juni::level` defines and the game loads.
 juni = { path = "../engine" }
+# PNG loading/cropping for the spritesheet/tileset cutter.
+image = { version = "0.25", default-features = false, features = ["png"] }
