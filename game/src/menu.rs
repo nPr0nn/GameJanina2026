@@ -221,11 +221,10 @@ impl Menu {
             32,
         );
 
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(42);
-        let mut rng = Rng::new(seed);
+        // Portable clock: `std::time::SystemTime` panics on wasm ("time not
+        // implemented on this platform"); `time_seed` uses the engine's
+        // `web_time` shim instead.
+        let mut rng = Rng::new(time_seed());
         let ducks = (0..DUCK_COUNT)
             .map(|_| FallingDuck::spawn(&duck_sheet, &mut rng, false))
             .collect();

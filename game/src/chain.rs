@@ -1,7 +1,7 @@
 use juni::prelude::*;
 
 use crate::animation::{Animation, SpriteSheet};
-use crate::collision::{move_point_swept, push_point_out_of_all, Collider, ColliderTree};
+use crate::collision::{move_point_swept_in, push_point_out_of_slice, Collider, ColliderTree};
 
 #[derive(Debug, Clone, Copy)]
 struct Joint {
@@ -72,10 +72,17 @@ pub struct Chain {
     /// These skip the stiffness snap and the straightening pass so the snap
     /// cannot push them back through geometry.
     obstacle_constrained: Vec<bool>,
-    /// Reusable buffer for broad-phase quad-tree queries. Kept on the chain so
-    /// the solver does not allocate a fresh `Vec` for every one of the many
-    /// `move_point_swept` calls per frame.
-    query_buffer: Vec<Collider>,
+    /// Per-joint obstacle candidates, gathered **once per frame** from a single
+    /// broad-phase query over each joint's local neighbourhood (its two
+    /// neighbours plus a margin), then reused by every swept correction for that
+    /// joint across all constraint iterations. This replaces a tree query per
+    /// joint *per iteration* — the dominant cost — while keeping each swept
+    /// scan tiny even for very long chains. Colliders are whole shapes and the
+    /// margin covers how far a joint can move while settling, so every shape a
+    /// joint can reach this frame is in its list (no-tunnelling preserved).
+    /// Indexed by joint; only internal joints (`1..n-1`) are populated. The inner
+    /// `Vec`s are reused frame-to-frame.
+    joint_obstacles: Vec<Vec<Collider>>,
 }
 
 impl Chain {
@@ -123,7 +130,7 @@ impl Chain {
             anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
-            query_buffer: Vec::new(),
+            joint_obstacles: Vec::new(),
         }
     }
 
@@ -160,7 +167,7 @@ impl Chain {
             anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
-            query_buffer: Vec::new(),
+            joint_obstacles: Vec::new(),
         }
     }
 
@@ -306,6 +313,36 @@ impl Chain {
         // Advance the metallic link shimmer.
         self.anim.update(dt);
 
+        // ── Broad phase (once per frame, per joint) ───────────────────────────
+        //
+        // For each internal joint, gather the obstacles whose bounds touch its
+        // local neighbourhood — the box around it and its two neighbours, grown
+        // by a margin covering how far it can move while the constraints settle
+        // (every correction only pulls it toward a neighbour, ≤ one segment per
+        // step). Every swept correction for that joint below reuses this small
+        // list instead of re-querying the tree per iteration. Because colliders
+        // are whole shapes and the margin bounds the joint's motion, every shape
+        // it can reach this frame is captured — the no-tunnelling guarantee is
+        // preserved, and each scan stays tiny even for very long chains.
+        let margin = self.segment_length * 2.0 + 8.0;
+        if self.joint_obstacles.len() < n {
+            self.joint_obstacles.resize_with(n, Vec::new);
+        }
+        for i in 1..n - 1 {
+            let region = three_point_bounds(
+                self.joints[i - 1].pos,
+                self.joints[i].pos,
+                self.joints[i + 1].pos,
+                margin,
+            );
+            let bucket = &mut self.joint_obstacles[i];
+            bucket.clear();
+            if !static_tree.is_empty() {
+                static_tree.query(region, bucket);
+            }
+            bucket.extend_from_slice(dynamics);
+        }
+
         // ── 0. Re-establish the "outside all obstacles" invariant ─────────────
         //
         // The whole no-teleport guarantee rests on one invariant: at the start
@@ -315,7 +352,7 @@ impl Chain {
         // straight line crossed a block, so a one-time static push-out (nearest
         // face) is correct — it is not a gameplay teleport.
         for i in 1..n - 1 {
-            let unstuck = push_point_out_of_all(self.joints[i].pos, static_tree, dynamics, &mut self.query_buffer);
+            let unstuck = push_point_out_of_slice(self.joints[i].pos, &self.joint_obstacles[i]);
             if unstuck != self.joints[i].pos {
                 self.joints[i].pos = unstuck;
                 self.joints[i].old_pos = unstuck;
@@ -335,7 +372,7 @@ impl Chain {
                 let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
                 let target = self.joints[i].pos + vel;
                 self.joints[i].old_pos = self.joints[i].pos;
-                let (moved, _) = move_point_swept(self.joints[i].pos, target, static_tree, dynamics, &mut self.query_buffer);
+                let (moved, _) = move_point_swept_in(self.joints[i].pos, target, &self.joint_obstacles[i]);
                 self.joints[i].pos = moved;
             }
         } else {
@@ -391,7 +428,7 @@ impl Chain {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
                     let old_pos = self.joints[i].pos;
-                    let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
+                    let (moved, hit) = move_point_swept_in(old_pos, target, &self.joint_obstacles[i]);
                     self.joints[i].pos = moved;
                     max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
@@ -410,7 +447,7 @@ impl Chain {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
                     let old_pos = self.joints[i].pos;
-                    let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
+                    let (moved, hit) = move_point_swept_in(old_pos, target, &self.joint_obstacles[i]);
                     self.joints[i].pos = moved;
                     max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
@@ -484,7 +521,7 @@ impl Chain {
                     let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
                     let current = self.joints[i].pos;
                     let target = current + (ideal - current) * strength;
-                    let (moved, hit) = move_point_swept(current, target, static_tree, dynamics, &mut self.query_buffer);
+                    let (moved, hit) = move_point_swept_in(current, target, &self.joint_obstacles[i]);
                     self.joints[i].pos = moved;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -512,7 +549,7 @@ impl Chain {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
                         let old_pos = self.joints[i].pos;
-                        let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
+                        let (moved, hit) = move_point_swept_in(old_pos, target, &self.joint_obstacles[i]);
                         self.joints[i].pos = moved;
                         max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
@@ -528,7 +565,7 @@ impl Chain {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
                         let old_pos = self.joints[i].pos;
-                        let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
+                        let (moved, hit) = move_point_swept_in(old_pos, target, &self.joint_obstacles[i]);
                         self.joints[i].pos = moved;
                         max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
@@ -657,6 +694,14 @@ impl Chain {
             Rect::new(j.pos.x - half, j.pos.y - half, self.link_size, self.link_size)
         })
     }
+}
+
+/// Axis-aligned bounding box of three points, grown by `margin` on every side.
+/// Used to gather the colliders a joint and its two neighbours can reach.
+fn three_point_bounds(a: Vec2D, b: Vec2D, c: Vec2D, margin: f32) -> Rect {
+    let min = a.min(b).min(c) - Vec2D::splat(margin);
+    let max = a.max(b).max(c) + Vec2D::splat(margin);
+    Rect::new(min.x, min.y, max.x - min.x, max.y - min.y)
 }
 
 /// Blend `color` toward white by `amount` (`0.0` = unchanged, `1.0` = white).

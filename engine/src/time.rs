@@ -3,7 +3,17 @@
 //! Uses `web_time::Instant`, a drop-in replacement for `std::time::Instant`
 //! that also works on `wasm32` (where `std::time::Instant` panics).
 
-use web_time::Instant;
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// A time-based RNG seed (milliseconds since the Unix epoch) that works on every
+/// platform — including `wasm32`, where `std::time::SystemTime` panics with
+/// "time not implemented on this platform". Uses `web_time`'s portable clock.
+pub fn time_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(42)
+}
 
 /// Print the per-second FPS readout. On the web we call `console.log` directly
 /// rather than going through the `log` crate: that lets us keep the global

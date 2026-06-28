@@ -584,6 +584,56 @@ pub fn push_point_out_of_all(
     pos
 }
 
+/// Swept point against a **pre-gathered** candidate slice (no broad-phase
+/// query). Same contract as [`move_point_swept`]: stops at the first surface and
+/// slides the remainder along it (up to 3 surfaces), returning `(final_pos,
+/// hit)`. The chain solver gathers the active snippet's candidates once per
+/// frame (see `Chain::frame_obstacles`) and reuses them across every constraint
+/// iteration, so this version skips the per-call tree traversal entirely.
+pub fn move_point_swept_in(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2D, bool) {
+    const SKIN: f32 = 0.02; // keep the point a hair outside the surface
+    let mut pos = from;
+    let mut vel = to - from;
+    let mut hit = false;
+
+    for _ in 0..3 {
+        if vel.length_squared() < 1e-10 {
+            break;
+        }
+        let mut t_min = 1.0f32;
+        let mut normal = Vec2D::ZERO;
+        for c in colliders {
+            if let Some((t, n)) = c.sweep_point(pos, vel) {
+                if t < t_min {
+                    t_min = t;
+                    normal = n;
+                }
+            }
+        }
+        pos += vel * t_min;
+        if t_min < 1.0 {
+            hit = true;
+            pos += normal * SKIN;
+            let remaining = vel * (1.0 - t_min);
+            vel = remaining - normal * remaining.dot(normal);
+        } else {
+            break;
+        }
+    }
+    (pos, hit)
+}
+
+/// Static push-out of a point against a pre-gathered candidate slice (the
+/// no-query counterpart of [`push_point_out_of_all`]).
+pub fn push_point_out_of_slice(mut pos: Vec2D, colliders: &[Collider]) -> Vec2D {
+    for c in colliders {
+        if let Some((p, _)) = c.push_point(pos) {
+            pos = p;
+        }
+    }
+    pos
+}
+
 /// Tight bounds of the segment `a → b`.
 fn segment_bounds(a: Vec2D, b: Vec2D) -> Rect {
     let min_x = a.x.min(b.x);
