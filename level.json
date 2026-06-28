@@ -1592,10 +1592,34 @@
       }
     }
   ],
-  "sprite_instances": [],
-  "classifications": [],
+  "sprite_instances": [
+    {
+      "id": "w1jlwv",
+      "path": "sprites/TX Plant_145_6_116_162.png",
+      "x": 1312.0,
+      "y": 480.0,
+      "scale": 1.0
+    },
+    {
+      "id": "o30u6i",
+      "path": "sprites/TX Props_288_304_32_48_2.png",
+      "x": 1088.0,
+      "y": 192.0,
+      "scale": 2.0
+    }
+  ],
+  "classifications": [
+    {
+      "object_id": "hzd3l4",
+      "tag": "mov"
+    },
+    {
+      "object_id": "o30u6i",
+      "tag": "mov"
+    }
+  ],
   "player_start": {
-    "x": 1728.0,
-    "y": -1088.0
+    "x": 1504.0,
+    "y": 416.0
   }
 }

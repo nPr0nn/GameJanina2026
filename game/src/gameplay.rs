@@ -11,7 +11,7 @@ use juni::prelude::*;
 
 use crate::animation::SpriteSheet;
 use crate::chain::Chain;
-use crate::collision::{depenetrate_aabb, resolve_aabb, Collider};
+use crate::collision::{depenetrate_aabb, push_rect_out_of_aabb, resolve_aabb, Collider};
 use crate::loc::Loc;
 use crate::player::Player;
 use crate::squeezable::Squeezables;
@@ -26,6 +26,32 @@ const PLAYER_STILL_THRESHOLD: f32 = 0.01;
 const CHAIN_STILL_THRESHOLD: f32 = 0.01;
 /// Iterations of the chain-length constraint solved per frame.
 const CHAIN_CLAMP_ITERS: usize = 4;
+/// Classification tag (authored in the editor) marking a collision box the
+/// player can push around. Anything not tagged `mov` is treated as static.
+const TAG_MOVABLE: &str = "mov";
+/// Side length (world pixels) of the snap grid the movable boxes settle onto.
+/// Boxes move freely while being pushed, then snap to the nearest cell once the
+/// player lets go — so accumulated float drift is erased every time one rests.
+const GRID_SIZE: f32 = 4.0;
+
+/// Snap a single world coordinate to the nearest [`GRID_SIZE`] line.
+fn snap_to_grid(v: f32) -> f32 {
+    (v / GRID_SIZE).round() * GRID_SIZE
+}
+
+/// A pushable box derived from a `mov`-tagged collision rectangle. Its `rect`
+/// is the live world-space AABB; the player both collides with it and shoves it.
+/// `sprites` links the box to every sprite instance that shares its object ID
+/// (via the editor's classification), so the artwork slides along with the box.
+struct MovableBox {
+    /// Current world-space AABB (top-left + size).
+    rect: Rect,
+    /// Initial top-left, restored on [`Gameplay::reset`].
+    origin: Vec2D,
+    /// `(sprite_instance index, offset from box top-left to sprite top-left)`
+    /// for each sprite that moves rigidly with this box.
+    sprites: Vec<(usize, Vec2D)>,
+}
 
 pub struct Gameplay {
     player: Player,
@@ -41,9 +67,12 @@ pub struct Gameplay {
     /// The level authored in the editor, in world coordinates. Drawn through the
     /// game camera, the same way the editor authored it.
     level: Level,
-    /// The level's collision layer as colliders (world space), derived once at
-    /// load. Static for the lifetime of the level.
-    level_colliders: Vec<Collider>,
+    /// The level's *static* collision layer as colliders (world space), derived
+    /// once at load from every collision shape not tagged `mov`.
+    static_colliders: Vec<Collider>,
+    /// Pushable boxes derived from the `mov`-tagged collision shapes. Their
+    /// positions change at runtime as the player shoves them.
+    boxes: Vec<MovableBox>,
     /// Sprite-instance textures, keyed by their PNG path. Loaded once at startup
     /// from the paths the editor recorded. Empty on the web (no filesystem).
     sprite_textures: HashMap<String, Texture>,
@@ -58,9 +87,13 @@ pub struct Gameplay {
     /// Running squeeze tally, shared with the squeeze listener so the HUD can
     /// display it. Demonstrates the event/listener wiring.
     squeeze_count: Rc<Cell<u32>>,
-    /// Scratch buffer for the per-frame chain collider set (level shapes + live
-    /// squeezables), reused to avoid a heap allocation every update.
+    /// Scratch buffer for the per-frame chain collider set (static shapes +
+    /// movable boxes + live squeezables), reused to avoid a heap allocation
+    /// every update.
     colliders: Vec<Collider>,
+    /// Scratch buffer for the player's movement set: the static world plus live
+    /// squeezables, but *not* the movable boxes (those are pushed, not slid on).
+    move_colliders: Vec<Collider>,
 }
 
 impl Gameplay {
@@ -73,7 +106,8 @@ impl Gameplay {
             32,
         );
         let level = load_level();
-        let level_colliders = level_colliders_from(&level);
+        let static_colliders = static_colliders_from(&level);
+        let boxes = movable_boxes_from(&level);
         let sprite_textures = load_sprite_textures(ctx, &level);
         // Spawn where the editor authored it, else the built-in default.
         let player_start = level.player_start_world().unwrap_or(PLAYER_START);
@@ -100,12 +134,14 @@ impl Gameplay {
             fps: 0,
             loc,
             level,
-            level_colliders,
+            static_colliders,
+            boxes,
             sprite_textures,
             player_start,
             squeezables,
             squeeze_count,
             colliders: Vec::new(),
+            move_colliders: Vec::new(),
         }
     }
 
@@ -121,6 +157,12 @@ impl Gameplay {
         self.squeeze_count.set(0);
         self.prev_player_pos = self.player.pos;
         self.player_still_for = 0.0;
+        // Slide every movable box (and its linked sprites) back to where the
+        // editor authored it.
+        for i in 0..self.boxes.len() {
+            let delta = self.boxes[i].origin - self.boxes[i].rect.position();
+            self.move_box(i, delta);
+        }
     }
 
     /// Advance the world one fixed step. Only called while actually playing, so
@@ -143,21 +185,26 @@ impl Gameplay {
             self.player_still_for += ctx.dt;
         }
 
-        // Rebuild the world collider set: the level's static shapes plus the
-        // live squeezables. Both the player and the chains resolve against it.
-        self.rebuild_colliders();
-
         // Integrate the player's velocity from input (acceleration + friction).
         self.player.input_direction(ctx);
 
         // ── Collision phase ─────────────────────────────────────────────────
-        // Move the player continuously by its velocity, let the chains follow
-        // and simulate, then constrain the player to the (now-current) chain
-        // lengths. A final depenetration pass un-sticks any residual overlap.
-        self.move_player(ctx);
+        // Move the player continuously by its velocity (sliding on the static
+        // world) and shove any movable box it runs into. Then rebuild the full
+        // collider set — now including the boxes at their new positions — let
+        // the chains follow and simulate, constrain the player to the
+        // (now-current) chain lengths, and finish with a depenetration pass.
+        self.rebuild_move_colliders();
+        self.move_player_and_push(ctx);
+        self.rebuild_colliders();
         self.step_chains(ctx);
         self.constrain_player_to_chains();
         self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &self.colliders);
+
+        // Once the player has fully stopped, settle it onto the grid too, so it
+        // comes to rest aligned with the boxes it pushes. Only when idle, so this
+        // never tugs at the player mid-move.
+        self.snap_player();
 
         // Sync the chain ends to the player's final attachment point.
         let end = self.player.chain_point();
@@ -169,20 +216,179 @@ impl Gameplay {
         self.squeezables.update(&self.chains);
     }
 
-    /// Rebuild the per-frame collider set into the reused `colliders` buffer:
-    /// the level's static colliders followed by the currently-alive squeezables.
+    /// Rebuild the full per-frame collider set (used by the chains and the final
+    /// depenetration): static colliders, then the movable boxes at their current
+    /// positions, then the currently-alive squeezables.
     fn rebuild_colliders(&mut self) {
         self.colliders.clear();
-        self.colliders.extend(self.level_colliders.iter().copied());
+        self.colliders.extend(self.static_colliders.iter().copied());
+        for b in &self.boxes {
+            self.colliders.push(Collider::Aabb(b.rect));
+        }
         self.squeezables.extend_colliders(&mut self.colliders);
     }
 
-    /// Move the player by its velocity for this frame, resolved continuously so
-    /// it slides along the first surface it meets and never tunnels.
-    fn move_player(&mut self, ctx: &Context) {
+    /// Rebuild the player's *movement* collider set: the static world plus the
+    /// live squeezables, deliberately excluding the movable boxes so the player
+    /// pushes them instead of sliding off them.
+    fn rebuild_move_colliders(&mut self) {
+        self.move_colliders.clear();
+        self.move_colliders.extend(self.static_colliders.iter().copied());
+        self.squeezables.extend_colliders(&mut self.move_colliders);
+    }
+
+    /// Move the player by its velocity for this frame, resolved continuously
+    /// against the static world, then shove any movable box it ends up
+    /// overlapping. Each box is pushed only as far as the static world and the
+    /// other boxes permit; whatever it can't absorb (e.g. it's wedged against a
+    /// wall) is fed back onto the player so the player never ends up inside it.
+    fn move_player_and_push(&mut self, ctx: &Context) {
         let displacement = self.player.velocity * ctx.dt;
         self.player.pos =
-            resolve_aabb(self.player.pos, self.player.shape, displacement, &self.colliders);
+            resolve_aabb(self.player.pos, self.player.shape, displacement, &self.move_colliders);
+
+        // Which boxes the player is in contact with this frame. A box that's
+        // being touched moves freely (smooth pushing); the rest are settled onto
+        // the grid below.
+        let mut touched = vec![false; self.boxes.len()];
+
+        for i in 0..self.boxes.len() {
+            let player_rect = Rect::new(
+                self.player.pos.x,
+                self.player.pos.y,
+                self.player.shape.x,
+                self.player.shape.y,
+            );
+            let box_rect = self.boxes[i].rect;
+            // Minimum translation that separates the box from the player; `want`
+            // points away from the player (roughly along the player's travel).
+            let Some((new_box_pos, _)) =
+                push_rect_out_of_aabb(box_rect.position(), box_rect.size(), player_rect)
+            else {
+                continue;
+            };
+            touched[i] = true;
+            let want = new_box_pos - box_rect.position();
+
+            // The box may only move where the static world and the other boxes
+            // allow it to.
+            let obstacles = self.box_obstacles(i);
+            let resolved = resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
+            let moved = resolved - box_rect.position();
+            self.move_box(i, moved);
+
+            // Push the player back by whatever separation the box couldn't take.
+            let residual = want - moved;
+            if residual.length_squared() > 1e-6 {
+                self.player.pos = resolve_aabb(
+                    self.player.pos,
+                    self.player.shape,
+                    -residual,
+                    &self.move_colliders,
+                );
+            }
+        }
+
+        // Settle every box the player isn't touching onto the grid, so resting
+        // boxes always sit on exact 4-pixel coordinates and never accumulate the
+        // float drift of repeated free-coordinate pushes. Boxes in contact are
+        // left alone so snapping never fights the player mid-push.
+        for i in 0..self.boxes.len() {
+            if !touched[i] {
+                self.snap_box(i);
+            }
+        }
+    }
+
+    /// Nudge box `i` to the nearest grid cell, clamped by the static world and
+    /// the other boxes so settling can never shove it into a wall. The move is
+    /// at most half a cell, so it's an imperceptible correction in practice.
+    fn snap_box(&mut self, i: usize) {
+        let rect = self.boxes[i].rect;
+        let target = Vec2D::new(snap_to_grid(rect.x), snap_to_grid(rect.y));
+        let delta = target - rect.position();
+        if delta.length_squared() < 1e-12 {
+            return;
+        }
+        let obstacles = self.box_obstacles(i);
+        let resolved = resolve_aabb(rect.position(), rect.size(), delta, &obstacles);
+        self.move_box(i, resolved - rect.position());
+    }
+
+    /// Snap the player to the nearest grid cell, but only when it has come to a
+    /// complete stop (`velocity == 0`, which friction only reaches with no input
+    /// held). The move is clamped against the world so it can't snap into a wall,
+    /// and at most half a cell, so it reads as a clean "click into place".
+    fn snap_player(&mut self) {
+        if self.player.velocity != Vec2D::ZERO {
+            return;
+        }
+        let pos = self.player.pos;
+        let target = Vec2D::new(snap_to_grid(pos.x), snap_to_grid(pos.y));
+        let delta = target - pos;
+        if delta.length_squared() < 1e-12 {
+            return;
+        }
+        self.player.pos = resolve_aabb(pos, self.player.shape, delta, &self.colliders);
+    }
+
+    /// Draw the snap grid as thin lines in a small neighbourhood around every
+    /// movable box. Bounded per box (not across the whole world) so a 4-pixel
+    /// grid stays cheap and legible — it's only ever shown in the F3 debug view.
+    fn draw_debug_grid(&self, canvas: &mut Canvas) {
+        /// Cells of margin drawn around each box.
+        const MARGIN_CELLS: f32 = 4.0;
+        /// Line thickness in world pixels.
+        const LINE_W: f32 = 0.5;
+        let color = LIGHTGRAY.with_alpha(0.2);
+
+        for b in &self.boxes {
+            let x0 = snap_to_grid(b.rect.x) - MARGIN_CELLS * GRID_SIZE;
+            let y0 = snap_to_grid(b.rect.y) - MARGIN_CELLS * GRID_SIZE;
+            let x1 = snap_to_grid(b.rect.x + b.rect.width) + MARGIN_CELLS * GRID_SIZE;
+            let y1 = snap_to_grid(b.rect.y + b.rect.height) + MARGIN_CELLS * GRID_SIZE;
+
+            let mut x = x0;
+            while x <= x1 {
+                canvas.rectangle(x, y0, LINE_W, y1 - y0, color);
+                x += GRID_SIZE;
+            }
+            let mut y = y0;
+            while y <= y1 {
+                canvas.rectangle(x0, y, x1 - x0, LINE_W, color);
+                y += GRID_SIZE;
+            }
+        }
+    }
+
+    /// The collider set a single box is allowed to move against: the static
+    /// world plus every *other* movable box (so boxes can't be shoved through
+    /// each other).
+    fn box_obstacles(&self, skip: usize) -> Vec<Collider> {
+        let mut obstacles = self.static_colliders.clone();
+        for (j, b) in self.boxes.iter().enumerate() {
+            if j != skip {
+                obstacles.push(Collider::Aabb(b.rect));
+            }
+        }
+        obstacles
+    }
+
+    /// Translate box `i` by `delta`, dragging every sprite linked to it (those
+    /// sharing its object ID) along rigidly.
+    fn move_box(&mut self, i: usize, delta: Vec2D) {
+        if delta == Vec2D::ZERO {
+            return;
+        }
+        self.boxes[i].rect.x += delta.x;
+        self.boxes[i].rect.y += delta.y;
+        let pos = self.boxes[i].rect.position();
+        for k in 0..self.boxes[i].sprites.len() {
+            let (idx, offset) = self.boxes[i].sprites[k];
+            let inst = &mut self.level.sprite_instances[idx];
+            inst.x = pos.x + offset.x;
+            inst.y = pos.y + offset.y;
+        }
     }
 
     /// Drive the chains to follow the player's attachment point and simulate
@@ -252,8 +458,26 @@ impl Gameplay {
         // Debug view: overlay the level's collision layer (translucent so the
         // sprites underneath stay visible). Off during normal play.
         if self.debug_collisions {
+            // The snap grid, drawn faintly around each movable box so the cells
+            // the boxes settle onto are visible while debugging.
+            self.draw_debug_grid(canvas);
+            // Static collision shapes (translucent) drawn from the level...
             for shape in &self.level.collision_shapes {
+                if self.level.get_tag(shape.id()) == Some(TAG_MOVABLE) {
+                    continue;
+                }
                 shape.with_alpha(0.4).draw(canvas);
+            }
+            // ...and the movable boxes at their *current* positions, tinted
+            // differently so the two kinds are easy to tell apart.
+            for b in &self.boxes {
+                canvas.rectangle(
+                    b.rect.x,
+                    b.rect.y,
+                    b.rect.width,
+                    b.rect.height,
+                    ORANGE.with_alpha(0.4),
+                );
             }
             self.player.draw_collider(canvas);
         }
@@ -293,12 +517,15 @@ fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
     ]
 }
 
-/// Convert the level's collision layer into colliders, in world coordinates.
-/// Done once at load — the collision layer is static at runtime.
-fn level_colliders_from(level: &Level) -> Vec<Collider> {
+/// Convert the level's *static* collision shapes into colliders, in world
+/// coordinates. Done once at load — every shape not tagged `mov` is static and
+/// never changes at runtime. The `mov`-tagged shapes become [`MovableBox`]es
+/// instead (see [`movable_boxes_from`]).
+fn static_colliders_from(level: &Level) -> Vec<Collider> {
     level
         .collision_shapes
         .iter()
+        .filter(|shape| level.get_tag(shape.id()) != Some(TAG_MOVABLE))
         .map(|shape| match shape {
             Shape::Rect {
                 x, y, width, height, ..
@@ -309,6 +536,49 @@ fn level_colliders_from(level: &Level) -> Vec<Collider> {
             },
         })
         .collect()
+}
+
+/// Build the pushable boxes from the `mov`-tagged collision rectangles.
+///
+/// Each box is linked to every sprite instance that shares its object ID — the
+/// correlation the editor's classification layer is for — so the artwork is
+/// dragged along when the box is shoved. Only rectangles become boxes; a `mov`
+/// tag on a circle is ignored (boxes are axis-aligned).
+fn movable_boxes_from(level: &Level) -> Vec<MovableBox> {
+    let mut boxes = Vec::new();
+    for shape in &level.collision_shapes {
+        if level.get_tag(shape.id()) != Some(TAG_MOVABLE) {
+            continue;
+        }
+        let Shape::Rect {
+            id,
+            x,
+            y,
+            width,
+            height,
+            ..
+        } = shape
+        else {
+            continue;
+        };
+        // Start on the grid: snap the collision box, but keep each sprite at its
+        // authored position by baking the (sub-cell) difference into its offset.
+        // The sprites then track the box exactly as it's pushed and re-snapped.
+        let rect = Rect::new(snap_to_grid(*x), snap_to_grid(*y), *width, *height);
+        let sprites = level
+            .sprite_instances
+            .iter()
+            .enumerate()
+            .filter(|(_, inst)| inst.id == *id)
+            .map(|(idx, inst)| (idx, Vec2D::new(inst.x - rect.x, inst.y - rect.y)))
+            .collect();
+        boxes.push(MovableBox {
+            rect,
+            origin: rect.position(),
+            sprites,
+        });
+    }
+    boxes
 }
 
 /// Load a texture for each unique sprite-instance path the editor recorded.

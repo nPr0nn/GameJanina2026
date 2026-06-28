@@ -9,9 +9,13 @@ const ANIM_WALK: u32 = 1;
 const SPRITE_SCALE: f32 = 1.0;
 
 /// How fast the player gathers speed toward the input direction (px/s²).
-const ACCELERATION: f32 = 1500.0;
+/// High enough to reach full speed in ~0.1s, so starts feel immediate instead
+/// of floaty (at 500 it took a full second to wind up to `speed`).
+const ACCELERATION: f32 = 500.0;
 /// How fast the player coasts to a stop when there is no input (px/s²).
-const FRICTION: f32 = 4000.0;
+/// Strong, so the player stops within ~15px of release instead of gliding —
+/// the snappy stop pairs with the rest-snap to keep movement tight to the grid.
+const FRICTION: f32 = 9000.0;
 /// Below this speed (px/s) the player is treated as idle (animation/facing).
 const MOVING_EPS: f32 = 1.0;
 
