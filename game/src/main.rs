@@ -9,6 +9,7 @@
 mod animation;
 mod collision;
 mod player;
+mod portals;
 mod chain;
 mod squeezable;
 mod gameplay;

@@ -12,6 +12,7 @@ use crate::chain::Chain;
 use crate::collision::{push_rect_out_of_aabb, push_rect_out_of_circle, resolve_swept, Collider};
 use crate::loc::Loc;
 use crate::player::Player;
+use crate::portals::Portals;
 use crate::squeezable::Squeezables;
 
 // A custom fragment shader: an animated rainbow driven by world position and
@@ -94,6 +95,15 @@ pub struct Gameplay {
     /// reused to avoid a heap allocation every update.
     colliders: Vec<Collider>,
     test_movable: crate::movable::MovableBox,
+    /// The linked portal pair. Shared by the player and every chain so both can
+    /// travel through it.
+    portals: Portals,
+    /// Player's net portal-crossing count, handed to each chain's player end so a
+    /// chain follows the player through a portal.
+    player_phase: i32,
+    /// Teleport latch for the player (mirrors the chain's per-joint latch): kept
+    /// false while the player still overlaps a portal it just used.
+    player_can_teleport: bool,
 }
 
 impl Gameplay {
@@ -106,6 +116,12 @@ impl Gameplay {
             32,
             32,
         );
+        let portal_in_texture = ctx.load_texture_from_memory(include_bytes!(
+            "../assets/sprites/Portal/Purple Portal Sprite Sheet.png"
+        ));
+        let portal_out_texture = ctx.load_texture_from_memory(include_bytes!(
+            "../assets/sprites/Portal/Green Portal Sprite Sheet.png"
+        ));
         let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         let chain_anchor = Vec2D::new(640.0, 100.0);
         let mut player = Player::new(ducky.clone());
@@ -158,6 +174,9 @@ impl Gameplay {
             squeezables,
             squeeze_count,
             colliders: Vec::new(),
+            portals: Portals::new(portal_in_texture, portal_out_texture),
+            player_phase: 0,
+            player_can_teleport: true,
         }
     }
 
@@ -184,6 +203,9 @@ impl Gameplay {
         self.squeeze_count.set(0);
         self.prev_player_pos = self.player.pos;
         self.player_still_for = 0.0;
+        self.portals.clear();
+        self.player_phase = 0;
+        self.player_can_teleport = true;
     }
 
     /// Advance the world one fixed step. Only called while actually playing, so
@@ -191,6 +213,7 @@ impl Gameplay {
     pub fn update(&mut self, ctx: &mut Context) {
         self.mouse = ctx.mouse_position();
         self.fps = ctx.fps;
+        self.portals.update(ctx.dt);
 
         // Toggle the collision-layer debug overlay.
         if ctx.is_key_pressed(Key::F3) {
@@ -200,6 +223,19 @@ impl Gameplay {
         // Play a pop on each left-click.
         if ctx.is_mouse_button_pressed(MouseButton::Left) {
             ctx.play_sound(&self.pop);
+        }
+
+        // Place (or move) a portal at the player on Space. The first press drops
+        // the `in` portal, the second the `out` portal, and further presses
+        // alternate. A portal that a chain is currently threading cannot be
+        // closed: try_place leaves it where it is while `crossing` holds.
+        if ctx.is_key_pressed(Key::Space) {
+            let crossing = self.chains.iter().any(|c| c.is_crossing_portal());
+            if self.portals.try_place(self.player.center(), crossing) {
+                // The player is standing inside the portal it just dropped; don't
+                // suck it through until it steps out and back in.
+                self.player_can_teleport = false;
+            }
         }
 
         // Track how long the player has been still.
@@ -229,6 +265,24 @@ impl Gameplay {
             }
         }
 
+        // Travel through portals (offset-preserving, so the player keeps its
+        // position relative to the portal mouth). The latch prevents an instant
+        // bounce-back on the frames the player still overlaps the portal it just
+        // used; it re-arms once the player clears both mouths. `player_phase`
+        // tracks net crossings so each chain end follows the player through.
+        // The count is unbounded: the player can wind through the portal pair
+        // any number of times, until the chain's maximum length is exhausted.
+        let center = self.player.center();
+        if let Some((dest, dphase)) = self.portals.teleport(center) {
+            if self.player_can_teleport {
+                self.player_can_teleport = false;
+                self.player.pos += dest - center;
+                self.player_phase += dphase;
+            }
+        } else {
+            self.player_can_teleport = true;
+        }
+
         // Simulate chains only while the player is moving or the chain is still
         // settling. Once the player stops and the chains go totally still, freeze
         // them to avoid micro-oscillations and save work.
@@ -236,9 +290,9 @@ impl Gameplay {
             && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
         for chain in &mut self.chains {
             chain.set_start(self.chain_anchor);
-            chain.set_end(self.player.pos);
+            chain.set_end(self.player.pos, self.player_phase);
             if !chains_frozen {
-                chain.update(ctx.dt, &self.colliders);
+                chain.update(ctx.dt, &self.colliders, Some(&self.portals));
             }
         }
 
@@ -246,6 +300,12 @@ impl Gameplay {
         for _ in 0..4 {
             let mut target = self.player.pos;
             for chain in &self.chains {
+                // A chain threading a portal reaches the player *through* the
+                // wormhole, so its straight-line world tether is meaningless —
+                // clamping to it would yank the player back through the portal.
+                if chain.is_crossing_portal() {
+                    continue;
+                }
                 let (tether, free_len) = chain.player_tether();
                 let dist = tether.distance(target);
                 if dist > free_len {
@@ -278,7 +338,7 @@ impl Gameplay {
         }
 
         for chain in &mut self.chains {
-            chain.set_end(self.player.pos);
+            chain.set_end(self.player.pos, self.player_phase);
         }
 
         // Crush any object a chain has cinched tight.
@@ -341,8 +401,10 @@ impl Gameplay {
             canvas.circle(pos, radius - 6.0, PINK);
         }
 
+        self.portals.draw(canvas);
+
         for chain in &self.chains {
-            chain.draw(canvas);
+            chain.draw(canvas, Some(&self.portals));
         }
         canvas.circle(self.chain_anchor, 12.0, GOLD);
 
