@@ -29,12 +29,28 @@ const CHAIN_CLAMP_ITERS: usize = 4;
 /// Classification tag (authored in the editor) marking a collision box the
 /// player can push around. Anything not tagged `mov` is treated as static.
 const TAG_MOVABLE: &str = "mov";
+/// Second movable class (GREEN/LIME boxes). Behaves like [`TAG_MOVABLE`] for now
+/// — it's a distinct tag so a future ability can gate it independently.
+const TAG_MOVABLE2: &str = "mov2";
 /// Classification tag for a collision shape that becomes a chain-crushable
 /// round object (a [`Squeezables`] entry) instead of a solid wall.
 const TAG_ITEM: &str = "item";
 /// Classification tag for a solid that collides with the **player** but is
 /// transparent to the **chain** (a bar the chain can sweep past).
 const TAG_BAR: &str = "bar";
+/// Classification tag for water tiles. Currently still a solid collider (just
+/// labelled), reserved for a future water/swim mechanic.
+const TAG_WATER: &str = "water";
+
+/// Sprite paths under this prefix are decorative ground and are never bound to a
+/// collision box during [`bind_collisions_to_assets`].
+const GRASS_PREFIX: &str = "sprites/TX Tileset Grass";
+
+/// `true` for any tag whose collision box is a player-pushable movable
+/// ([`MovableBox`]). Both `mov` (GOLD) and `mov2` (GREEN/LIME) qualify.
+fn is_movable_tag(tag: Option<&str>) -> bool {
+    matches!(tag, Some(TAG_MOVABLE) | Some(TAG_MOVABLE2))
+}
 /// Side length (world pixels) of the snap grid the movable boxes settle onto.
 /// Boxes move freely while being pushed, then snap to the nearest cell once the
 /// player lets go — so accumulated float drift is erased every time one rests.
@@ -231,11 +247,16 @@ impl Gameplay {
             32,
             32,
         );
-        let level = load_level();
+        let mut level = load_level();
+        // Load the asset textures first (their pixel size is needed to measure
+        // overlaps), then resolve the designer's missing tag/ID wiring: each
+        // collision box is classified by its colour and bound to the asset it
+        // overlaps most. Only after that do we derive the collider sets.
+        let sprite_textures = load_sprite_textures(ctx, &level);
+        bind_collisions_to_assets(&mut level, &sprite_textures);
         let static_colliders = static_colliders_from(&level);
         let bar_colliders = bar_colliders_from(&level);
         let boxes = movable_boxes_from(&level);
-        let sprite_textures = load_sprite_textures(ctx, &level);
         // Spawn where the editor authored it, else the built-in default.
         let player_start = level.player_start_world().unwrap_or(PLAYER_START);
 
@@ -765,8 +786,8 @@ impl Gameplay {
             self.draw_debug_grid(canvas);
             // Static collision shapes (translucent) drawn from the level...
             for shape in &self.level.collision_shapes {
-                if self.level.get_tag(shape.id()) == Some(TAG_MOVABLE) {
-                    continue;
+                if is_movable_tag(self.level.get_tag(shape.id())) {
+                    continue; // movable boxes are drawn separately below
                 }
                 shape.with_alpha(0.4).draw(canvas);
             }
@@ -829,10 +850,101 @@ fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
     ]
 }
 
+/// Map a collision box's authored palette colour to its classification tag.
+///
+/// These are the editor's shape-palette colours (see the editor's `PALETTE`),
+/// matched by exact RGB. `None` means "don't classify": RED is explicitly
+/// ignored, and so is any colour outside the palette.
+fn tag_for_color(color: Color) -> Option<&'static str> {
+    match (color.r, color.g, color.b) {
+        (255, 203, 0) => Some(TAG_MOVABLE),    // GOLD   → movable
+        (0, 158, 47) => Some(TAG_MOVABLE2),    // LIME   ("GREEN") → also movable
+        (135, 60, 190) => Some(TAG_ITEM),      // VIOLET ("PURPLE") → squeezable item
+        (255, 161, 0) => Some(TAG_BAR),        // ORANGE → bar (player-solid, chain-pass)
+        (102, 191, 255) => Some(TAG_WATER),    // SKYBLUE → water
+        (230, 41, 55) => None,                 // RED    → ignore completely
+        _ => None,                             // anything else → leave untagged
+    }
+}
+
+/// Resolve the map designer's missing tag/ID wiring at load time.
+///
+/// Each collision box was painted a palette colour but never tagged or linked to
+/// an asset. For every box (except RED):
+///   1. derive its tag from its colour ([`tag_for_color`]);
+///   2. find the sprite instance it overlaps by the **greatest intersection
+///      area**, ignoring grass tilesets (pure decoration). A box straddling
+///      several assets binds to the one it covers most — which is how the two
+///      GOLD boxes that span multiple assets resolve unambiguously;
+///   3. give the box and that asset a **shared object ID** and record one
+///      authoritative classification entry, so every downstream system (movable
+///      boxes, bars, items, water, the sprite Y-sort) sees the connection.
+///
+/// `textures` supplies each asset's pixel size (× its scale = world rect). On
+/// the web it is empty, so no asset can be measured: boxes are still classified
+/// by colour — their gameplay behaviour works — but no sprite is linked.
+fn bind_collisions_to_assets(level: &mut Level, textures: &HashMap<String, Texture>) {
+    // World-space rect of each asset, computed once. `None` = grass (ignored) or
+    // an asset whose texture isn't loaded (e.g. on the web), which can't match.
+    let asset_rects: Vec<Option<Rect>> = level
+        .sprite_instances
+        .iter()
+        .map(|inst| {
+            if inst.path.starts_with(GRASS_PREFIX) {
+                return None;
+            }
+            let tex = textures.get(&inst.path)?;
+            Some(Rect::new(
+                inst.x,
+                inst.y,
+                tex.width() as f32 * inst.scale,
+                tex.height() as f32 * inst.scale,
+            ))
+        })
+        .collect();
+
+    for ci in 0..level.collision_shapes.len() {
+        let Some(tag) = tag_for_color(level.collision_shapes[ci].color()) else {
+            continue; // RED or off-palette: leave as an untagged static wall.
+        };
+
+        let (bx, by, bw, bh) = level.collision_shapes[ci].bounding_rect();
+        let box_rect = Rect::new(bx, by, bw, bh);
+
+        // The asset with the largest overlapping area wins (ties keep the first).
+        let mut best: Option<(usize, f32)> = None;
+        for (ai, asset_rect) in asset_rects.iter().enumerate() {
+            let Some(asset_rect) = asset_rect else { continue };
+            let area = box_rect.intersection_area(asset_rect);
+            if area > 0.0 && best.is_none_or(|(_, best_area)| area > best_area) {
+                best = Some((ai, area));
+            }
+        }
+
+        // Reuse the box's authored ID as the shared key, or synthesise a stable
+        // one. The box and its matched asset both adopt it, and one classification
+        // entry (colour is authoritative, so any stale one is replaced) ties them
+        // together.
+        let id = match level.collision_shapes[ci].id() {
+            "" => format!("bind_{ci}"),
+            existing => existing.to_string(),
+        };
+        level.collision_shapes[ci].set_id(id.clone());
+        if let Some((ai, _)) = best {
+            level.sprite_instances[ai].id = id.clone();
+        }
+        level.classifications.retain(|e| e.object_id != id);
+        level.classifications.push(ClassificationEntry {
+            object_id: id,
+            tag: tag.to_string(),
+        });
+    }
+}
+
 /// Convert the level's *static* collision shapes into colliders, in world
-/// coordinates. Done once at load — every shape not tagged `mov` is static and
-/// never changes at runtime. The `mov`-tagged shapes become [`MovableBox`]es
-/// instead (see [`movable_boxes_from`]).
+/// coordinates. Done once at load — every shape not tagged movable/item/bar is
+/// static and never changes at runtime. The movable-tagged shapes become
+/// [`MovableBox`]es instead (see [`movable_boxes_from`]).
 fn static_colliders_from(level: &Level) -> Vec<Collider> {
     // Solid walls: everything except the specially-tagged shapes (movable boxes,
     // squeezable items, and player-only bars all become something else).
@@ -841,7 +953,9 @@ fn static_colliders_from(level: &Level) -> Vec<Collider> {
         .iter()
         .filter(|shape| {
             let tag = level.get_tag(shape.id());
-            tag != Some(TAG_MOVABLE) && tag != Some(TAG_ITEM) && tag != Some(TAG_BAR)
+            // Movable boxes (mov/mov2), squeezable items, and player-only bars
+            // all become something other than a solid wall. Water stays solid.
+            !is_movable_tag(tag) && tag != Some(TAG_ITEM) && tag != Some(TAG_BAR)
         })
         .map(shape_to_collider)
         .collect()
@@ -901,7 +1015,8 @@ fn shape_to_collider(shape: &Shape) -> Collider {
 fn movable_boxes_from(level: &Level) -> Vec<MovableBox> {
     let mut boxes = Vec::new();
     for shape in &level.collision_shapes {
-        if level.get_tag(shape.id()) != Some(TAG_MOVABLE) {
+        // Both GOLD (`mov`) and GREEN/LIME (`mov2`) collision boxes are movable.
+        if !is_movable_tag(level.get_tag(shape.id())) {
             continue;
         }
         let Shape::Rect {

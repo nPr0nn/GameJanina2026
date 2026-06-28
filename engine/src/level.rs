@@ -59,6 +59,14 @@ impl Shape {
         }
     }
 
+    /// The shape's authored fill colour (used by the editor's palette and, at
+    /// load time, to derive a classification tag).
+    pub fn color(&self) -> Color {
+        match self {
+            Shape::Rect { color, .. } | Shape::Circle { color, .. } => *color,
+        }
+    }
+
     /// Bounding rectangle as `(x, y, width, height)` in world-space pixels.
     pub fn bounding_rect(&self) -> (f32, f32, f32, f32) {
         match self {
