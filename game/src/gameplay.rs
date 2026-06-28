@@ -104,6 +104,18 @@ fn pull_normal(p: Rect, b: Rect, disp: Vec2D, reach: f32) -> Option<Vec2D> {
     best.map(|(_, n)| n)
 }
 
+/// First movable the `player` rect is latched to for pulling this frame (given
+/// the intended `disp`), as `(handle, outward normal)`. See [`pull_normal`].
+fn find_pull(
+    movables: &[(MovableRef, Rect)],
+    player: Rect,
+    disp: Vec2D,
+) -> Option<(MovableRef, Vec2D)> {
+    movables
+        .iter()
+        .find_map(|&(m, rect)| pull_normal(player, rect, disp, PULL_REACH).map(|n| (m, n)))
+}
+
 /// Clamp `v` so it never has the opposite sign of `want`: positive `want`
 /// forbids negative `v` (and vice-versa); a zero `want` leaves `v` untouched.
 /// Keeps a pushed box from sliding backwards relative to the intended shove.
@@ -146,6 +158,17 @@ struct MovableBox {
     /// `(sprite_instance index, offset from box top-left to sprite top-left)`
     /// for each sprite that moves rigidly with this box.
     sprites: Vec<(usize, Vec2D)>,
+}
+
+/// Handle to a thing the player can push/pull: a `mov` box or an `item`
+/// squeezable. Both expose an AABB collider, so the push/pull code treats them
+/// uniformly; the variant just says how to move it. Only boxes grid-snap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MovableRef {
+    /// Index into [`Gameplay::boxes`].
+    Box(usize),
+    /// Item index into the [`Squeezables`] store.
+    Squeezable(usize),
 }
 
 pub struct Gameplay {
@@ -340,70 +363,66 @@ impl Gameplay {
         self.player_colliders.extend(self.bar_colliders.iter().copied());
     }
 
-    /// Rebuild the player's *movement* collider set: the static world and bars
-    /// plus the live squeezables, deliberately excluding the movable boxes so
-    /// the player pushes them instead of sliding off them.
+    /// Rebuild the player's *movement* collider set: just the immovable world
+    /// (static walls + bars). The movables — boxes *and* squeezables — are left
+    /// out so the player pushes them instead of sliding off them; depenetration
+    /// still keeps the player out of any it isn't actively shoving.
     fn rebuild_move_colliders(&mut self) {
         self.move_colliders.clear();
         self.move_colliders.extend(self.static_colliders.iter().copied());
         self.move_colliders.extend(self.bar_colliders.iter().copied());
-        self.squeezables.extend_colliders(&mut self.move_colliders);
     }
 
     /// Move the player by its velocity for this frame, resolved against the
-    /// static world, then run its box interactions: **push** (shove a box it
-    /// walks into) and **pull** (drag a box it's latched to and walks away from).
-    /// Both are gated by the player's abilities. Boxes not touched this frame are
-    /// settled onto the grid.
+    /// static world, then run its movable interactions: **push** (shove a
+    /// movable it walks into) and **pull** (drag one it's latched to and walks
+    /// away from). Both are gated by the player's abilities and apply uniformly
+    /// to `mov` boxes and `item` squeezables (every movable is an AABB). Boxes
+    /// not touched this frame are settled onto the grid.
     fn move_player_and_push(&mut self, ctx: &Context) {
         let displacement = self.player.velocity * ctx.dt;
         let old_pos = self.player.pos;
 
-        // Decide the pull *before* moving, from where the player stands relative
-        // to each box's extended border and the direction it's heading.
-        let pull = self.player.abilities.pull.then(|| self.find_pull(old_pos, displacement)).flatten();
+        // Snapshot every movable's collider; decide the pull *before* moving.
+        let movables = self.movables();
+        let pull = self
+            .player
+            .abilities
+            .pull
+            .then(|| find_pull(&movables, self.player.collider(), displacement))
+            .flatten();
 
-        // Move the player against the static world only (boxes excluded so it can
-        // push and pull them rather than collide).
+        // Move the player against the static world only (movables excluded so it
+        // can push and pull them rather than collide).
         self.player.pos =
             resolve_aabb(self.player.pos, self.player.shape, displacement, &self.move_colliders);
 
-        // Which boxes are interacted with this frame; the rest snap to the grid.
+        // Track which boxes were interacted with; untouched ones snap to grid.
         let mut touched = vec![false; self.boxes.len()];
-        let pull_idx = pull.map(|(i, _)| i);
+        let pull_ref = pull.map(|(m, _)| m);
 
-        // PUSH: shove any box the player walked into (excluding a box being pulled).
+        // PUSH: shove any movable the player walked into (except the pulled one).
         if self.player.abilities.push {
-            for i in 0..self.boxes.len() {
-                if Some(i) == pull_idx {
+            for &(m, rect) in &movables {
+                if Some(m) == pull_ref {
                     continue;
                 }
                 let player_rect = self.player.collider();
-                let box_rect = self.boxes[i].rect;
-                // Minimum translation that separates the box from the player;
+                // Minimum translation that separates the movable from the player;
                 // `want` points away from the player (roughly along its travel).
-                let Some((new_box_pos, _)) =
-                    push_rect_out_of_aabb(box_rect.position(), box_rect.size(), player_rect)
+                let Some((new_pos, _)) =
+                    push_rect_out_of_aabb(rect.position(), rect.size(), player_rect)
                 else {
                     continue;
                 };
-                touched[i] = true;
-                let want = new_box_pos - box_rect.position();
+                if let MovableRef::Box(i) = m {
+                    touched[i] = true;
+                }
+                let want = new_pos - rect.position();
+                let moved = self.resolve_movable(m, rect, want);
+                self.move_movable(m, moved);
 
-                // The box may only move where the static world and the other
-                // boxes allow it to.
-                let obstacles = self.box_obstacles(i);
-                let resolved = resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
-                // Never let the box travel *against* the push. When it's already
-                // flush against a static, the swept resolver's skin clearance
-                // nudges it back a hair (away from the wall, into the player);
-                // unclamped that reads as the box drifting backwards when you
-                // shove it into a static. Clamp each axis to the sign of `want`.
-                let raw = resolved - box_rect.position();
-                let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
-                self.move_box(i, moved);
-
-                // Push the player back by whatever separation the box couldn't take.
+                // Push the player back by whatever separation it couldn't take.
                 let residual = want - moved;
                 if residual.length_squared() > 1e-6 {
                     self.player.pos = resolve_aabb(
@@ -416,28 +435,27 @@ impl Gameplay {
             }
         }
 
-        // PULL: drag the latched box along by however far the player actually
-        // moved outward (it may be less than intended if a wall stopped it). The
-        // box trails at a constant gap, clamped by the static world / other boxes.
-        if let Some((i, normal)) = pull {
+        // PULL: drag the latched movable by however far the player actually moved
+        // outward (less than intended if a wall stopped it). It trails at a
+        // constant gap, clamped by the static world and the other movables.
+        if let Some((m, normal)) = pull {
             let outward = (self.player.pos - old_pos).dot(normal);
             if outward > 0.0 {
-                let want = normal * outward;
-                let box_rect = self.boxes[i].rect;
-                let obstacles = self.box_obstacles(i);
-                let resolved =
-                    resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
-                let raw = resolved - box_rect.position();
-                let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
-                self.move_box(i, moved);
-                touched[i] = true;
+                if let Some(&(_, rect)) = movables.iter().find(|(mm, _)| *mm == m) {
+                    let want = normal * outward;
+                    let moved = self.resolve_movable(m, rect, want);
+                    self.move_movable(m, moved);
+                    if let MovableRef::Box(i) = m {
+                        touched[i] = true;
+                    }
+                }
             }
         }
 
         // Settle every box the player isn't touching onto the grid, so resting
         // boxes always sit on exact grid coordinates and never accumulate the
-        // float drift of repeated free-coordinate pushes. Boxes in contact are
-        // left alone so snapping never fights the player mid-interaction.
+        // float drift of repeated free-coordinate pushes. (Squeezables are round
+        // and don't grid-snap.)
         for i in 0..self.boxes.len() {
             if !touched[i] {
                 self.snap_box(i);
@@ -445,14 +463,38 @@ impl Gameplay {
         }
     }
 
-    /// Find the first box the player (top-left `pos`) is latched to for pulling
-    /// this frame, given the intended `displacement`. Returns `(box index,
-    /// outward normal)` — see [`pull_normal`].
-    fn find_pull(&self, pos: Vec2D, displacement: Vec2D) -> Option<(usize, Vec2D)> {
-        let player_rect = Rect::new(pos.x, pos.y, self.player.shape.x, self.player.shape.y);
-        self.boxes.iter().enumerate().find_map(|(i, b)| {
-            pull_normal(player_rect, b.rect, displacement, PULL_REACH).map(|n| (i, n))
-        })
+    /// Every movable this frame as `(handle, current AABB)`: the `mov` boxes
+    /// followed by the alive `item` squeezables.
+    fn movables(&self) -> Vec<(MovableRef, Rect)> {
+        let mut out: Vec<(MovableRef, Rect)> = self
+            .boxes
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (MovableRef::Box(i), b.rect))
+            .collect();
+        for (idx, center, radius) in self.squeezables.each_alive() {
+            let rect = Rect::new(center.x - radius, center.y - radius, 2.0 * radius, 2.0 * radius);
+            out.push((MovableRef::Squeezable(idx), rect));
+        }
+        out
+    }
+
+    /// Resolve a movable's intended `want` translation against the world (statics
+    /// + bars + every *other* movable), clamped so it never travels against the
+    /// push. Returns the delta actually applied.
+    fn resolve_movable(&self, m: MovableRef, rect: Rect, want: Vec2D) -> Vec2D {
+        let obstacles = self.movable_obstacles(m);
+        let resolved = resolve_aabb(rect.position(), rect.size(), want, &obstacles);
+        let raw = resolved - rect.position();
+        Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y))
+    }
+
+    /// Apply a translation to a movable, dispatching to the box or squeezable.
+    fn move_movable(&mut self, m: MovableRef, delta: Vec2D) {
+        match m {
+            MovableRef::Box(i) => self.move_box(i, delta),
+            MovableRef::Squeezable(idx) => self.squeezables.translate(idx, delta),
+        }
     }
 
     /// Settle box `i` onto the grid, clamped by the static world and the other
@@ -464,7 +506,7 @@ impl Gameplay {
         // Treat the player as an obstacle too, so settling a box never snaps it
         // *into* the player (which would then depenetrate the player into a
         // static behind them and feel like getting stuck in the wall).
-        let mut obstacles = self.box_obstacles(i);
+        let mut obstacles = self.movable_obstacles(MovableRef::Box(i));
         obstacles.push(Collider::Aabb(self.player.collider()));
         let (bn_x, bp_x) = blocked_axes(rect, Vec2D::X, &obstacles);
         let (bn_y, bp_y) = blocked_axes(rect, Vec2D::Y, &obstacles);
@@ -550,15 +592,26 @@ impl Gameplay {
         }
     }
 
-    /// The collider set a single box is allowed to move against: the static
-    /// world and bars (both solid) plus every *other* movable box (so boxes can't
-    /// be shoved through walls, bars, or each other).
-    fn box_obstacles(&self, skip: usize) -> Vec<Collider> {
+    /// The collider set a single movable (`skip`) may move against: the static
+    /// world and bars (both solid) plus every *other* movable (boxes and
+    /// squeezables) so movables can't be shoved through walls, bars, or each
+    /// other. Reads live positions.
+    fn movable_obstacles(&self, skip: MovableRef) -> Vec<Collider> {
         let mut obstacles = self.static_colliders.clone();
         obstacles.extend(self.bar_colliders.iter().copied());
         for (j, b) in self.boxes.iter().enumerate() {
-            if j != skip {
+            if skip != MovableRef::Box(j) {
                 obstacles.push(Collider::Aabb(b.rect));
+            }
+        }
+        for (idx, center, radius) in self.squeezables.each_alive() {
+            if skip != MovableRef::Squeezable(idx) {
+                obstacles.push(Collider::Aabb(Rect::new(
+                    center.x - radius,
+                    center.y - radius,
+                    2.0 * radius,
+                    2.0 * radius,
+                )));
             }
         }
         obstacles
