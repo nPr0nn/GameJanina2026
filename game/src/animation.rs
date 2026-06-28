@@ -175,6 +175,11 @@ impl Animation {
         self.finished
     }
 
+    /// Index of the frame currently shown in the active row.
+    pub fn current_frame(&self) -> usize {
+        self.current
+    }
+
     /// Size of one frame in source pixels (before any draw `scale`).
     pub fn frame_size(&self) -> Vec2D {
         Vec2D::new(self.sheet.frame_w, self.sheet.frame_h)

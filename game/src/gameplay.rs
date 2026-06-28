@@ -21,7 +21,7 @@ use crate::squeezable::Squeezables;
 /// Where the player spawns, in world coordinates.
 const PLAYER_START: Vec2D = Vec2D::new(0.0, 0.0);
 /// Where the chains are anchored, in world coordinates.
-const CHAIN_ANCHOR: Vec2D = Vec2D::new(0.0, 0.0);
+const CHAIN_ANCHOR: Vec2D = Vec2D::new(992.0, 128.0);
 /// Seconds of player stillness before the chain is allowed to freeze.
 const PLAYER_STILL_THRESHOLD: f32 = 0.01;
 /// Maximum joint displacement (px/frame) considered "totally still".
@@ -783,8 +783,8 @@ impl Gameplay {
         canvas.clear_background(BLACK);
 
         let camera = Camera2D {
-            // Centre the view on the duck (offset = half the hit-box).
-            target: self.player.pos + Vec2D::new(14.0, 14.0),
+            // Centre the view on the duck (offset = half the 32×32 sprite).
+            target: self.player.pos + Vec2D::new(16.0, 16.0),
             offset: Vec2D::new(640.0, 360.0),
             rotation: 0.0,
             zoom: self.zoom,

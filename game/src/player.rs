@@ -57,10 +57,11 @@ impl Player {
             pos: Vec2D::ZERO,
             // Hit-box sized to the drawn duck (32×32 frame at SPRITE_SCALE 1).
             shape: Vec2D::new(28.0, 28.0),
+            abilities: Abilities::default(),
             speed: 500.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
             // The duck sprite is 32×32, so centre the tether point on the sprite.
-            chain_offset: Vec2D::new(18.0, 24.0),
+            chain_offset: Vec2D::new(16.0, 16.0),
             // Loop the idle row to start; `input_direction` switches to walking.
             anim: Animation::new(sheet, ANIM_IDLE, 10.0, true),
             facing_left: false,
@@ -144,13 +145,6 @@ impl Player {
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
-        if self.portal_activated {
-            canvas.circle(self.portal_in.center, self.portal_in.radius, PURPLE);
-        }
-        if self.both_portal_activated {
-            canvas.circle(self.portal_out.center, self.portal_out.radius, PURPLE);
-        }
-
         // Centre the sprite on the hit box: the 32×32 ducky frame is larger than
         // the 28×28 collider, so offset the top-left by half the size difference.
         let sprite_size = self.anim.frame_size() * SPRITE_SCALE;
