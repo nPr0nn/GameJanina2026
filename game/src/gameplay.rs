@@ -32,11 +32,62 @@ const TAG_MOVABLE: &str = "mov";
 /// Side length (world pixels) of the snap grid the movable boxes settle onto.
 /// Boxes move freely while being pushed, then snap to the nearest cell once the
 /// player lets go — so accumulated float drift is erased every time one rests.
-const GRID_SIZE: f32 = 4.0;
+const GRID_SIZE: f32 = 2.0;
 
 /// Snap a single world coordinate to the nearest [`GRID_SIZE`] line.
 fn snap_to_grid(v: f32) -> f32 {
     (v / GRID_SIZE).round() * GRID_SIZE
+}
+
+/// Snap one axis of a resting object to the grid, but never *off* a wall it's
+/// pressed against. `blocked_neg`/`blocked_pos` say whether an obstacle sits
+/// just past the object's negative/positive face on this axis. When pressed
+/// against one side we round *toward* it (so the later [`resolve_aabb`] keeps
+/// the object flush instead of letting it pop back a cell — the "moves
+/// backwards" bug when shoving a box into a static); otherwise we snap to the
+/// nearest line.
+fn snap_axis(v: f32, blocked_neg: bool, blocked_pos: bool) -> f32 {
+    let lo = (v / GRID_SIZE).floor() * GRID_SIZE; // nearest line ≤ v
+    let hi = (v / GRID_SIZE).ceil() * GRID_SIZE; // nearest line ≥ v (== lo if on a line)
+    if blocked_pos && !blocked_neg {
+        hi // pressed on the +side: only ever round toward it, never away
+    } else if blocked_neg && !blocked_pos {
+        lo
+    } else if v - lo <= hi - v {
+        lo
+    } else {
+        hi
+    }
+}
+
+/// Clamp `v` so it never has the opposite sign of `want`: positive `want`
+/// forbids negative `v` (and vice-versa); a zero `want` leaves `v` untouched.
+/// Keeps a pushed box from sliding backwards relative to the intended shove.
+fn clamp_to_sign(v: f32, want: f32) -> f32 {
+    if want > 0.0 {
+        v.max(0.0)
+    } else if want < 0.0 {
+        v.min(0.0)
+    } else {
+        v
+    }
+}
+
+/// Probe whether `rect` is resting against any `obstacles` just past its
+/// negative and positive faces along `axis` (a unit X or Y vector), by nudging
+/// it a pixel each way and seeing if it's stopped short. Returns
+/// `(blocked_negative, blocked_positive)`. Used to make grid-snapping keep an
+/// object flush with whatever it's pressed against instead of popping off it.
+fn blocked_axes(rect: Rect, axis: Vec2D, obstacles: &[Collider]) -> (bool, bool) {
+    const PROBE: f32 = 1.0;
+    let pos = rect.position();
+    let size = rect.size();
+    let moved_neg = resolve_aabb(pos, size, -axis * PROBE, obstacles) - pos;
+    let moved_pos = resolve_aabb(pos, size, axis * PROBE, obstacles) - pos;
+    (
+        moved_neg.length() < PROBE - 1e-3,
+        moved_pos.length() < PROBE - 1e-3,
+    )
 }
 
 /// A pushable box derived from a `mov`-tagged collision rectangle. Its `rect`
@@ -199,7 +250,7 @@ impl Gameplay {
         self.rebuild_colliders();
         self.step_chains(ctx);
         self.constrain_player_to_chains();
-        self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &self.colliders);
+        self.depenetrate_player();
 
         // Once the player has fully stopped, settle it onto the grid too, so it
         // comes to rest aligned with the boxes it pushes. Only when idle, so this
@@ -274,7 +325,14 @@ impl Gameplay {
             // allow it to.
             let obstacles = self.box_obstacles(i);
             let resolved = resolve_aabb(box_rect.position(), box_rect.size(), want, &obstacles);
-            let moved = resolved - box_rect.position();
+            // Never let the box travel *against* the push. When it's already
+            // flush against a static, the swept resolver's skin clearance nudges
+            // it back a hair (away from the wall, into the player); unclamped
+            // that reads as the box drifting backwards when you shove it into a
+            // static. Clamp each axis to the sign of `want` so a blocked box
+            // simply stays put.
+            let raw = resolved - box_rect.position();
+            let moved = Vec2D::new(clamp_to_sign(raw.x, want.x), clamp_to_sign(raw.y, want.y));
             self.move_box(i, moved);
 
             // Push the player back by whatever separation the box couldn't take.
@@ -300,31 +358,62 @@ impl Gameplay {
         }
     }
 
-    /// Nudge box `i` to the nearest grid cell, clamped by the static world and
-    /// the other boxes so settling can never shove it into a wall. The move is
-    /// at most half a cell, so it's an imperceptible correction in practice.
+    /// Settle box `i` onto the grid, clamped by the static world and the other
+    /// boxes. The snap is contact-aware (see [`snap_axis`]): a box resting
+    /// against a static is rounded *into* it, so pushing a box up against a
+    /// static no longer makes it pop back a cell.
     fn snap_box(&mut self, i: usize) {
         let rect = self.boxes[i].rect;
-        let target = Vec2D::new(snap_to_grid(rect.x), snap_to_grid(rect.y));
+        // Treat the player as an obstacle too, so settling a box never snaps it
+        // *into* the player (which would then depenetrate the player into a
+        // static behind them and feel like getting stuck in the wall).
+        let mut obstacles = self.box_obstacles(i);
+        obstacles.push(Collider::Aabb(self.player.collider()));
+        let (bn_x, bp_x) = blocked_axes(rect, Vec2D::X, &obstacles);
+        let (bn_y, bp_y) = blocked_axes(rect, Vec2D::Y, &obstacles);
+        let target = Vec2D::new(
+            snap_axis(rect.x, bn_x, bp_x),
+            snap_axis(rect.y, bn_y, bp_y),
+        );
         let delta = target - rect.position();
         if delta.length_squared() < 1e-12 {
             return;
         }
-        let obstacles = self.box_obstacles(i);
         let resolved = resolve_aabb(rect.position(), rect.size(), delta, &obstacles);
         self.move_box(i, resolved - rect.position());
     }
 
-    /// Snap the player to the nearest grid cell, but only when it has come to a
-    /// complete stop (`velocity == 0`, which friction only reaches with no input
-    /// held). The move is clamped against the world so it can't snap into a wall,
-    /// and at most half a cell, so it reads as a clean "click into place".
+    /// Eject the player from any overlaps, resolving *movable* things (boxes and
+    /// squeezables) first and the immovable static world **last**. A player
+    /// squeezed between a pushable box and a static is then always ejected from
+    /// the static — at worst clipping the box a hair, which the next frame's
+    /// push phase clears — instead of being shoved into the solid wall (which a
+    /// single combined pass, statics-first, would do).
+    fn depenetrate_player(&mut self) {
+        let mut movable: Vec<Collider> =
+            self.boxes.iter().map(|b| Collider::Aabb(b.rect)).collect();
+        self.squeezables.extend_colliders(&mut movable);
+        self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &movable);
+        self.player.pos =
+            depenetrate_aabb(self.player.pos, self.player.shape, &self.static_colliders);
+    }
+
+    /// Snap the player to the grid, but only when it has come to a complete stop
+    /// (`velocity == 0`, which friction only reaches with no input held). Like
+    /// the boxes the snap is contact-aware, so resting against a wall or a box
+    /// never bounces the player off it.
     fn snap_player(&mut self) {
         if self.player.velocity != Vec2D::ZERO {
             return;
         }
         let pos = self.player.pos;
-        let target = Vec2D::new(snap_to_grid(pos.x), snap_to_grid(pos.y));
+        let rect = Rect::new(pos.x, pos.y, self.player.shape.x, self.player.shape.y);
+        let (bn_x, bp_x) = blocked_axes(rect, Vec2D::X, &self.colliders);
+        let (bn_y, bp_y) = blocked_axes(rect, Vec2D::Y, &self.colliders);
+        let target = Vec2D::new(
+            snap_axis(pos.x, bn_x, bp_x),
+            snap_axis(pos.y, bn_y, bp_y),
+        );
         let delta = target - pos;
         if delta.length_squared() < 1e-12 {
             return;

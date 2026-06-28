@@ -93,21 +93,6 @@
     },
     {
       "Rect": {
-        "id": "o30u6i",
-        "x": 1088.0,
-        "y": 192.0,
-        "width": 64.0,
-        "height": 96.0,
-        "color": {
-          "r": 0,
-          "g": 158,
-          "b": 47,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "pej0su",
         "x": 832.0,
         "y": -128.0,
@@ -1590,19 +1575,34 @@
           "a": 255
         }
       }
+    },
+    {
+      "Rect": {
+        "id": "vmqbvm",
+        "x": 1088.0,
+        "y": 208.0,
+        "width": 64.0,
+        "height": 80.0,
+        "color": {
+          "r": 0,
+          "g": 158,
+          "b": 47,
+          "a": 255
+        }
+      }
     }
   ],
   "sprite_instances": [
     {
-      "id": "w1jlwv",
+      "id": "nfwcmi",
       "path": "sprites/TX Plant_145_6_116_162.png",
-      "x": 1312.0,
-      "y": 480.0,
+      "x": 1216.0,
+      "y": 320.0,
       "scale": 1.0
     },
     {
-      "id": "o30u6i",
-      "path": "sprites/TX Props_288_304_32_48_2.png",
+      "id": "vmqbvm",
+      "path": "sprites/TX Props_288_304_32_48.png",
       "x": 1088.0,
       "y": 192.0,
       "scale": 2.0
@@ -5415,12 +5415,17 @@
       "tag": "mov"
     },
     {
-      "object_id": "o30u6i",
+      "object_id": "mumiel",
+      "tag": "mov"
+    },
+    {
+      "object_id": "vmqbvm",
       "tag": "mov"
     }
   ],
   "player_start": {
-    "x": 1504.0,
-    "y": 416.0
-  }
+    "x": 992.0,
+    "y": 128.0
+  },
+  "grid_size": 16.0
 }

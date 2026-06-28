@@ -19,10 +19,13 @@ pub(crate) enum Tool {
 
 /// What a left-drag is currently doing in a shape layer.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[allow(clippy::enum_variant_names)] // the shared "Shape" suffix reads clearly here
 pub(crate) enum DragAction {
     /// Dragging on empty space to create a brand-new shape.
     NewShape,
-    /// Dragging to redefine the geometry of an already-selected shape.
+    /// Dragging a shape's body to reposition it (the default for a hit).
+    MoveShape(usize),
+    /// Shift-dragging a shape to redefine its geometry from scratch.
     RedrawShape(usize),
 }
 

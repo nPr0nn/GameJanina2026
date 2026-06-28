@@ -185,8 +185,16 @@ pub struct ClassificationEntry {
     pub tag: String,
 }
 
+/// Default authoring grid size (world pixels) for a level that doesn't record
+/// one — e.g. a level file written before the grid became configurable.
+pub const DEFAULT_GRID_SIZE: f32 = 32.0;
+
+fn default_grid_size() -> f32 {
+    DEFAULT_GRID_SIZE
+}
+
 /// An ordered collection of planning layers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Level {
     #[serde(default, alias = "shapes")]
     pub sprite_shapes: Vec<Shape>,
@@ -202,6 +210,23 @@ pub struct Level {
     /// fall back to its own default spawn.
     #[serde(default)]
     pub player_start: Option<SpawnPoint>,
+    /// The authoring grid the editor snaps to, in world pixels. Defaults to
+    /// [`DEFAULT_GRID_SIZE`] for older files that predate this field.
+    #[serde(default = "default_grid_size")]
+    pub grid_size: f32,
+}
+
+impl Default for Level {
+    fn default() -> Self {
+        Self {
+            sprite_shapes: Vec::new(),
+            collision_shapes: Vec::new(),
+            sprite_instances: Vec::new(),
+            classifications: Vec::new(),
+            player_start: None,
+            grid_size: DEFAULT_GRID_SIZE,
+        }
+    }
 }
 
 impl Level {
