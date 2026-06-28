@@ -1,7 +1,6 @@
-//! The gameplay screen: the original shapes/texture/audio demo, wrapped so the
-//! screen manager can create, reset, update, and draw it. It owns only world
-//! state — global keys (pause, fullscreen, win/lose) are handled by the screen
-//! manager in `main.rs`.
+//! The gameplay screen: chain-lasso prototype with obstacles, squeezable
+//! circles, a movable box, and portals. World state lives here; global keys
+//! (pause, fullscreen, win/lose) are handled by the screen manager in `main.rs`.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,6 +16,11 @@ use crate::squeezable::Squeezables;
 // A custom fragment shader: an animated rainbow driven by world position and
 // `globals.time`. Same vertex/uniform interface as the built-in shape shader,
 // so it plugs straight into `begin_shader_mode`.
+/// Seconds of player stillness before the chain is allowed to freeze.
+const PLAYER_STILL_THRESHOLD: f32 = 0.01;
+/// Maximum joint displacement (px/frame) considered "totally still".
+const CHAIN_STILL_THRESHOLD: f32 = 0.01;
+
 const RAINBOW_SHADER: &str = r#"
 struct Globals {
     proj: mat4x4<f32>,
@@ -68,6 +72,8 @@ pub struct Gameplay {
     level: Level,
     chains: Vec<Chain>,
     chain_anchor: Vec2D,
+    prev_player_pos: Vec2D,
+    player_still_for: f32,
     /// Static obstacles in world space. Chains and the player both collide
     /// with these; chain joints wrap around them naturally.
     obstacles: Vec<Rect>,
@@ -103,25 +109,22 @@ impl Gameplay {
             Rect::new(720.0, 310.0, 110.0, 70.0),
         ];
 
-        // A squeezable circle, and a listener that tallies crushes for the HUD.
-        // Any other system could register its own listener the same way.
         let mut squeezables = Squeezables::new();
         squeezables.spawn(Vec2D::new(640.0, 480.0), 45.0);
         let squeeze_count = Rc::new(Cell::new(0u32));
         let counter = squeeze_count.clone();
-        squeezables.on_squeeze(move |ev| {
+        squeezables.on_squeeze(move |_| {
             counter.set(counter.get() + 1);
-            let _ = ev; // listener receives the full event; here we just tally
         });
+
+        let prev_player_pos = player.pos;
 
         Self {
             x: 100.0,
             dir: 1.0,
-            mouse: Vec2D::ZERO,
             test_movable,
-            // Compile the custom shader once, up front (raylib's LoadShader).
+            mouse: Vec2D::ZERO,
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
-            // Embed + decode the texture and sound once.
             cow: cow_texture.clone(),
             player,
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
@@ -131,6 +134,8 @@ impl Gameplay {
             level: load_level(),
             chains,
             chain_anchor,
+            prev_player_pos,
+            player_still_for: 0.0,
             obstacles,
             squeezables,
             squeeze_count,
@@ -159,6 +164,8 @@ impl Gameplay {
         ];
         self.squeezables.revive_all();
         self.squeeze_count.set(0);
+        self.prev_player_pos = self.player.pos;
+        self.player_still_for = 0.0;
     }
 
     /// Advance the world one fixed step. Only called while actually playing, so
@@ -172,20 +179,21 @@ impl Gameplay {
             ctx.play_sound(&self.pop);
         }
 
-        // ── Build this frame's collider set ──────────────────────────────────
-        //
-        // Blocks (static) plus every living squeezable (round).  The chains wrap
-        // around all of them uniformly through `Collider`.
+        // Track how long the player has been still.
+        if self.player.pos.distance_squared(self.prev_player_pos) > 1e-4 {
+            self.player_still_for = 0.0;
+            self.prev_player_pos = self.player.pos;
+        } else {
+            self.player_still_for += ctx.dt;
+        }
+
+        // Build the collider set: blocks + living squeezables.
         self.colliders.clear();
         self.colliders
             .extend(self.obstacles.iter().map(|&r| Collider::Aabb(r)));
         self.squeezables.extend_colliders(&mut self.colliders);
 
-        // ── Player movement ──────────────────────────────────────────────────
-        //
-        // Use swept AABB so the player never tunnels into a block, and slides
-        // along wall surfaces naturally.  Round objects are resolved with a
-        // discrete push-out afterwards (the player moves only a few px/frame).
+        // Move the player against blocks, then push out of round objects.
         let move_dir = self.player.input_direction(ctx);
         let vel = move_dir * self.player.speed * ctx.dt;
         self.player.pos =
@@ -198,33 +206,20 @@ impl Gameplay {
             }
         }
 
-        // ── Chain simulation ─────────────────────────────────────────────────
-        //
-        // Run physics with the player's tentative (post-movement, pre-chain-
-        // constraint) position.  Chain joints settle around obstacles via the
-        // fused swept push-out inside the constraint loop.
+        // Simulate chains only while the player is moving or the chain is still
+        // settling. Once the player stops and the chains go totally still, freeze
+        // them to avoid micro-oscillations and save work.
+        let chains_frozen = self.player_still_for >= PLAYER_STILL_THRESHOLD
+            && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
         for chain in &mut self.chains {
             chain.set_start(self.chain_anchor);
             chain.set_end(self.player.pos);
-            chain.update(ctx.dt, &self.colliders);
+            if !chains_frozen {
+                chain.update(ctx.dt, &self.colliders);
+            }
         }
 
-        // ── Post-simulation player constraint ────────────────────────────────
-        //
-        // Straight-line distance from the anchor is wrong when the chain wraps
-        // around an obstacle: the chain uses up path length getting around the
-        // block, leaving less reach for the player.
-        //
-        // `player_tether()` returns the last obstacle-contact joint and the
-        // remaining free length from that joint to the player end.  When there
-        // are no contacts it returns (anchor, max_length) — identical to a plain
-        // straight-line check.  We iterate so multiple chain constraints
-        // converge when they pull in different directions.
-        //
-        // The corrected target is reached via `resolve_swept` (moving FROM the
-        // player's current position), so the constraint can never yank the
-        // player through a block — it slides along the surface instead, exactly
-        // like a real rope reeling a body around a corner.
+        // Clamp the player to each chain's remaining free length.
         for _ in 0..4 {
             let mut target = self.player.pos;
             for chain in &self.chains {
@@ -243,9 +238,7 @@ impl Gameplay {
                 resolve_swept(self.player.pos, self.player.shape, delta, &self.obstacles);
         }
 
-        // Final safety: should the player still overlap a block or object after
-        // the constraint solve (e.g. squeezed between a wall and the rope), push
-        // it out.  Swept movement makes this a no-op in practice.
+        // Push the player out of any overlapping block or object.
         for &rect in &self.obstacles {
             if let Some((new_pos, _)) =
                 push_rect_out_of_aabb(self.player.pos, self.player.shape, rect)
@@ -261,25 +254,17 @@ impl Gameplay {
             }
         }
 
-        // Sync chain endpoints so the visual matches the final player position.
         for chain in &mut self.chains {
             chain.set_end(self.player.pos);
         }
 
-        // ── Squeeze detection ────────────────────────────────────────────────
-        //
-        // Now that the chains have settled, check whether any of them has cinched
-        // a full tight loop around an object.  Crushed objects vanish and their
-        // listeners fire (here: the HUD tally).
+        // Crush any object a chain has cinched tight.
         self.squeezables.update(&self.chains);
 
-        // Spin the rotating cow at 90 deg/sec.
         self.spin += 90.0 * ctx.dt;
 
-        // Mouse wheel zooms the camera in/out (clamped).
         self.zoom = (self.zoom + ctx.mouse_wheel_move() * 0.1).clamp(0.1, 4.0);
 
-        // Fixed-timestep movement: 240 virtual px/sec, bouncing in [100, 1080].
         self.x += self.dir * 240.0 * ctx.dt;
         if self.x > 1080.0 {
             self.x = 1080.0;
@@ -291,23 +276,21 @@ impl Gameplay {
 
         self.test_movable.update(ctx);
 
-        // Testa se o player colidiu com o movable box, se colidiu, diminui a vel do player e empurra a caixa para a direcao de velocidade do player
+        // Push the movable box when the player walks into it.
         let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
         let box_rect = self.test_movable.rect;
         if player_rect.intersects(&box_rect) {
-            let player_velocity = self.player.velocity * self.player.player_speed * ctx.dt;
-            let impulse = player_velocity;
-            self.test_movable.empurrar(impulse);
-            self.player.player_speed = 200.0; // Diminui a velocidade do player
+            let impulse = self.player.velocity * self.player.player_speed * ctx.dt;
+            self.test_movable.push(impulse);
+            self.player.player_speed = 200.0; // Slow down while pushing
         } else {
-            self.player.player_speed = 500.0; // Restaura a velocidade do player
+            self.player.player_speed = 500.0; // Restore normal speed
         }
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
         canvas.clear_background(WHITE);
 
-        // A 2D camera following the player and zooming with the wheel.
         let camera = Camera2D {
             target: self.player.pos + Vec2D::new(50.0, 50.0),
             offset: Vec2D::new(640.0, 360.0),
@@ -316,23 +299,10 @@ impl Gameplay {
         };
         canvas.begin_mode_2d(camera);
 
-        canvas.rectangle(60.0, 60.0, 300.0, 180.0, SKYBLUE);
-        canvas.rectangle_from_rect(Rect::new(60.0, 300.0, 300.0, 180.0), GOLD);
-        canvas.triangle(
-            Vec2D::new(640.0, 120.0),
-            Vec2D::new(540.0, 320.0),
-            Vec2D::new(740.0, 320.0),
-            MAROON,
-        );
-        canvas.quad(
-            Vec2D::new(820.0, 120.0),
-            Vec2D::new(1120.0, 120.0),
-            Vec2D::new(1060.0, 320.0),
-            Vec2D::new(760.0, 320.0),
-            DARKGREEN,
-        );
+        for &rect in &self.obstacles {
+            canvas.rectangle_from_rect(rect, DARKGRAY);
+        }
 
-        // Animated rainbow quad via the custom shader.
         canvas.begin_shader_mode(&self.rainbow);
         canvas.quad(
             Vec2D::new(400.0, 300.0),
@@ -343,8 +313,15 @@ impl Gameplay {
         );
         canvas.end_shader_mode();
 
-        canvas.regular_polygon(Vec2D::new(1140.0, 480.0), 5, 70.0, -90.0, ORANGE);
-        canvas.draw_texture_ex(&self.cow, Vec2D::new(520.0, 230.0), 180.0, 6.0, WHITE);
+        for (pos, radius) in self.squeezables.alive() {
+            canvas.circle(pos, radius, MAGENTA);
+            canvas.circle(pos, radius - 6.0, PINK);
+        }
+
+        for chain in &self.chains {
+            chain.draw(canvas);
+        }
+        canvas.circle(self.chain_anchor, 12.0, GOLD);
 
         let size = self.cow.width() as f32 * 4.0;
         canvas.draw_texture_pro(
@@ -362,34 +339,13 @@ impl Gameplay {
 
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
 
-        // Draw obstacles.
-        for &rect in &self.obstacles {
-            canvas.rectangle_from_rect(rect, DARKGRAY);
-        }
-
-        // Draw squeezable circles (under the chains so the lasso reads clearly).
-        for (pos, radius) in self.squeezables.alive() {
-            canvas.circle(pos, radius, MAGENTA);
-            canvas.circle(pos, radius - 6.0, PINK);
-        }
-
-        // Draw all chains and the shared anchor.
-        for chain in &self.chains {
-            chain.draw(canvas);
-        }
-        canvas.circle(self.chain_anchor, 12.0, GOLD);
-
         self.player.draw(canvas);
 
-        // The level authored in the editor. Its shapes are in world
-        // coordinates, so it's drawn inside the camera — pan/zoom move it with
-        // the rest of the scene, matching what the editor showed.
         self.level.draw(canvas);
 
         self.test_movable.draw(canvas);
         canvas.end_mode_2d();
 
-        // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
         canvas.text(
             &format!("SQUEEZED: {}", self.squeeze_count.get()),

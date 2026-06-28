@@ -19,9 +19,9 @@ impl Player {
     pub fn new(cow: Texture) -> Player {
         Self {
             pos: Vec2D::ZERO,
-            shape: Vec2D::new(100.0, 100.0), // Define o tamanho do jogador
-            speed: 500.0,                    // Velocidade usada pelo sistema de correntes
-            player_speed: 500.0,             // Velocidade usada pela caixa móvel
+            shape: Vec2D::new(100.0, 100.0), // Player hit-box size
+            speed: 500.0,                    // Speed used by the chain system
+            player_speed: 500.0,             // Speed used by the movable box push
             velocity: Vec2D::ZERO,
             cow,
             portal_activated: false,

@@ -1,6 +1,5 @@
 use juni::prelude::*;
 
-
 pub struct MovableBox {
     pub rect: Rect,
 }
@@ -14,15 +13,11 @@ impl MovableBox {
         canvas.rectangle(self.rect.x, self.rect.y, self.rect.width, self.rect.height, BROWN);
     }
 
-    pub fn update(&mut self, ctx: &mut Context) {
+    pub fn update(&mut self, _ctx: &mut Context) {}
 
-    }
-
-    pub fn empurrar(&mut self, impulso: Vec2D) {
-        let pos = self.rect.position() + impulso;
+    pub fn push(&mut self, impulse: Vec2D) {
+        let pos = self.rect.position() + impulse;
         self.rect.x = pos.x;
         self.rect.y = pos.y;
     }
-        
 }
-

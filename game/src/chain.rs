@@ -138,6 +138,13 @@ impl Chain {
         self.joints[self.joints.len() - 1].pos
     }
 
+    /// True when every joint's frame-to-frame displacement is below `threshold`.
+    pub fn is_still(&self, threshold: f32) -> bool {
+        self.joints
+            .iter()
+            .all(|j| j.pos.distance_squared(j.old_pos) < threshold * threshold)
+    }
+
     /// Geometric stretch in `[0, 1]`: actual path length divided by max length.
     ///
     /// Reflects the real chain path, not just the straight-line anchor distance,
