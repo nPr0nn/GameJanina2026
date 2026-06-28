@@ -2,26 +2,30 @@
 //!
 //! A [`Level`] stores two ordered lists of [`Shape`]s in **world coordinates** —
 //! the space a [`Camera2D`](crate::Camera2D) looks at. The editor uses one layer
-//! for sprite planning and one for collision-box planning. The game reads the
-//! same file and renders the sprite-planning layer with [`Level::draw`]. The
-//! on-disk form is plain JSON, so levels are hand-editable and diff-friendly.
+//! for sprite planning, one for collision-box planning, and one for classification
+//! (tagging objects with semantic labels like "static", "movable", etc.). The game
+//! reads the same file and renders the sprite-planning layer with [`Level::draw`].
+//! The on-disk form is plain JSON, so levels are hand-editable and diff-friendly.
 
 use crate::canvas::Canvas;
 use crate::color::Color;
 use crate::math::Vec2D;
 use serde::{Deserialize, Serialize};
 
-/// Default level file path, relative to the working directory. Both `cargo run`
-/// (the game) and `cargo run -p editor` run from the workspace root, so they
-/// agree on this location out of the box.
+/// Default level file path, relative to the working directory.
 pub const DEFAULT_LEVEL_PATH: &str = "level.json";
 
-/// A single placed primitive. Coordinates are world-space pixels (what the
-/// camera looks at), so what the editor shows is what the game gets.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// A single placed primitive. Coordinates are world-space pixels.
+///
+/// Each shape carries a free-form string `id`. IDs are not required to be
+/// unique — multiple objects (e.g. a sprite and its collision box) can share
+/// the same ID so they also share the same classification tag automatically.
+/// Call [`Level::ensure_ids`] after loading to fill in any empty IDs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Shape {
     /// Axis-aligned rectangle with top-left at `(x, y)`.
     Rect {
+        id: String,
         x: f32,
         y: f32,
         width: f32,
@@ -30,6 +34,7 @@ pub enum Shape {
     },
     /// Circle centered at `(x, y)`.
     Circle {
+        id: String,
         x: f32,
         y: f32,
         radius: f32,
@@ -38,76 +43,115 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// Draw this shape into `canvas`.
-    pub fn draw(&self, canvas: &mut Canvas) {
-        match *self {
-            Shape::Rect {
-                x,
-                y,
-                width,
-                height,
-                color,
-            } => canvas.rectangle(x, y, width, height, color),
-            Shape::Circle {
-                x,
-                y,
-                radius,
-                color,
-            } => canvas.circle(Vec2D::new(x, y), radius, color),
+    /// The object ID of this shape (empty string = unassigned).
+    pub fn id(&self) -> &str {
+        match self {
+            Shape::Rect { id, .. } => id.as_str(),
+            Shape::Circle { id, .. } => id.as_str(),
         }
     }
 
-    /// Return a copy of this shape with its color alpha scaled to `alpha`.
-    pub fn with_alpha(&self, alpha: f32) -> Self {
-        match *self {
-            Shape::Rect {
-                x,
-                y,
-                width,
-                height,
-                color,
-            } => Shape::Rect {
-                x,
-                y,
-                width,
-                height,
-                color: color.with_alpha(alpha),
-            },
-            Shape::Circle {
-                x,
-                y,
-                radius,
-                color,
-            } => Shape::Circle {
-                x,
-                y,
-                radius,
-                color: color.with_alpha(alpha),
-            },
+    /// Replace this shape's ID.
+    pub fn set_id(&mut self, new_id: String) {
+        match self {
+            Shape::Rect { id, .. } => *id = new_id,
+            Shape::Circle { id, .. } => *id = new_id,
         }
     }
 
-    /// `true` if `p` (world-space pixels) lies inside the shape. Used by the
-    /// editor for click-to-delete hit testing.
-    pub fn contains(&self, p: Vec2D) -> bool {
-        match *self {
+    /// Bounding rectangle as `(x, y, width, height)` in world-space pixels.
+    pub fn bounding_rect(&self) -> (f32, f32, f32, f32) {
+        match self {
             Shape::Rect {
                 x,
                 y,
                 width,
                 height,
                 ..
-            } => p.x >= x && p.x <= x + width && p.y >= y && p.y <= y + height,
-            Shape::Circle { x, y, radius, .. } => Vec2D::new(x, y).distance(p) <= radius,
+            } => (*x, *y, *width, *height),
+            Shape::Circle { x, y, radius, .. } => {
+                (x - radius, y - radius, 2.0 * radius, 2.0 * radius)
+            }
+        }
+    }
+
+    /// Draw this shape into `canvas`.
+    pub fn draw(&self, canvas: &mut Canvas) {
+        match self {
+            Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+                ..
+            } => canvas.rectangle(*x, *y, *width, *height, *color),
+            Shape::Circle {
+                x,
+                y,
+                radius,
+                color,
+                ..
+            } => canvas.circle(Vec2D::new(*x, *y), *radius, *color),
+        }
+    }
+
+    /// Return a clone of this shape with its color alpha scaled to `alpha`.
+    pub fn with_alpha(&self, alpha: f32) -> Self {
+        match self {
+            Shape::Rect {
+                id,
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => Shape::Rect {
+                id: id.clone(),
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+                color: color.with_alpha(alpha),
+            },
+            Shape::Circle {
+                id,
+                x,
+                y,
+                radius,
+                color,
+            } => Shape::Circle {
+                id: id.clone(),
+                x: *x,
+                y: *y,
+                radius: *radius,
+                color: color.with_alpha(alpha),
+            },
+        }
+    }
+
+    /// `true` if `p` (world-space pixels) lies inside the shape.
+    pub fn contains(&self, p: Vec2D) -> bool {
+        match self {
+            Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => p.x >= *x && p.x <= *x + *width && p.y >= *y && p.y <= *y + *height,
+            Shape::Circle { x, y, radius, .. } => Vec2D::new(*x, *y).distance(p) <= *radius,
         }
     }
 }
 
-/// A placed sprite image in the level, stored as a path + transform so it can
-/// be serialized. The editor resolves the path to a GPU texture at runtime.
+/// A placed sprite image in the level.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpriteInstance {
-    /// Path to the PNG, relative to the workspace root (e.g. `"sprites/player.png"`).
+    /// Free-form object ID. May be shared with other objects (e.g. a collision
+    /// box that belongs to the same logical entity). Empty = unassigned.
+    pub id: String,
+    /// Path to the PNG, relative to the workspace root.
     pub path: String,
     /// Top-left position in world-space pixels.
     pub x: f32,
@@ -116,8 +160,21 @@ pub struct SpriteInstance {
     pub scale: f32,
 }
 
-/// An ordered collection of planning layers. Later shapes within each layer
-/// draw on top of earlier ones.
+/// Maps an object ID to a semantic classification tag such as `"static"`,
+/// `"movable"`, or `"cuttable"`. Authored in the editor's Classification layer.
+///
+/// The `object_id` is a string and may match multiple objects — this is
+/// intentional: setting `id = "player"` on both a sprite and its collision box
+/// means they automatically share the same tag.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClassificationEntry {
+    /// The ID string that identifies the target object(s).
+    pub object_id: String,
+    /// Free-form tag (e.g. `"static"`, `"movable"`, `"wall"`).
+    pub tag: String,
+}
+
+/// An ordered collection of planning layers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Level {
     #[serde(default, alias = "shapes")]
@@ -127,12 +184,46 @@ pub struct Level {
     /// Sprite images placed in the sprite-planning layer.
     #[serde(default)]
     pub sprite_instances: Vec<SpriteInstance>,
+    /// Classification tags authored in the Classification layer.
+    #[serde(default)]
+    pub classifications: Vec<ClassificationEntry>,
 }
 
 impl Level {
     /// An empty level.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Call `id_gen()` for every shape or sprite whose ID is currently empty,
+    /// assigning the returned string as a stable identifier.
+    ///
+    /// Pass any `FnMut() -> String` — the editor supplies [`random_id`] from
+    /// its own module so the engine itself stays dependency-free.
+    pub fn ensure_ids<F: FnMut() -> String>(&mut self, mut id_gen: F) {
+        for shape in &mut self.sprite_shapes {
+            if shape.id().is_empty() {
+                shape.set_id(id_gen());
+            }
+        }
+        for shape in &mut self.collision_shapes {
+            if shape.id().is_empty() {
+                shape.set_id(id_gen());
+            }
+        }
+        for inst in &mut self.sprite_instances {
+            if inst.id.is_empty() {
+                inst.id = id_gen();
+            }
+        }
+    }
+
+    /// Return the classification tag for objects with the given `id`, if any.
+    pub fn get_tag(&self, id: &str) -> Option<&str> {
+        self.classifications
+            .iter()
+            .find(|e| e.object_id == id)
+            .map(|e| e.tag.as_str())
     }
 
     /// Draw the sprite-planning layer, in order.
@@ -144,7 +235,6 @@ impl Level {
 
     /// Serialize to pretty JSON.
     pub fn to_json(&self) -> String {
-        // Both ends control the type, so this can't realistically fail.
         serde_json::to_string_pretty(self)
             .unwrap_or_else(|_| "{\"sprite_shapes\":[],\"collision_shapes\":[]}".to_string())
     }
@@ -154,16 +244,12 @@ impl Level {
         serde_json::from_str(text)
     }
 
-    /// Read a level from a JSON file (native only — the web has no synchronous
-    /// filesystem). On any IO/parse error an `Err` is returned so callers can
-    /// fall back to an empty level.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
         Self::from_json(&text).map_err(std::io::Error::other)
     }
 
-    /// Write this level to a JSON file (native only).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         std::fs::write(path, self.to_json())

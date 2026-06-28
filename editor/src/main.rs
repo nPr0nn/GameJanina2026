@@ -2,13 +2,16 @@
 //
 //   cargo run -p editor
 //
-// Left-drag to place the current shape, right-click to delete the shape under
-// the cursor, and save with S. Middle-drag pans and the wheel zooms a
-// `Camera2D`, so the canvas can be scrolled around a level larger than the
-// screen. Shapes are authored and stored in *world* coordinates (what the
-// camera looks at), so the game must view them through a camera too — see
-// `juni::level`. The output (`level.json` in the working directory) is the
-// exact file the game loads.
+// Left-drag to place shapes, click a shape to select/redraw, right-click or Del/Bksp to delete, S to save.
+// Middle-drag pans; wheel zooms. Tab cycles between three layers:
+//   Sprite → Collision → Classification
+//
+// In the Classification layer:
+//   Arrows  navigate objects
+//   Enter   edit the focused object's tag
+//   I       edit the focused object's ID
+//   Tab     (while editing a tag) cycle through existing tags
+//   Delete  clear the tag on the focused object
 
 use juni::prelude::*;
 use std::collections::HashMap;
@@ -24,6 +27,52 @@ const GRID_SIZE: f32 = 32.0;
 const GRID_MAJOR_EVERY: i32 = 4;
 const WINDOW_TITLE: &str = "juni — level editor";
 
+/// Color palette for classification tags. Colors are assigned in order as new
+/// tags are introduced; the first entry is used for the built-in `"static"`.
+const TAG_PALETTE: [Color; 10] = [
+    LIGHTGRAY, SKYBLUE, GREEN, ORANGE, PINK, PURPLE, GOLD, RED, BEIGE, BLUE,
+];
+
+/// Height of a classification label rectangle in world pixels.
+const LABEL_H: f32 = 15.0;
+/// Minimum vertical gap between two resolved labels.
+const LABEL_GAP: f32 = 2.0;
+
+/// A deferred label for the classification layer. All labels are collected,
+/// overlap-resolved, then drawn in a single second pass so no two labels
+/// whose x-ranges overlap are rendered on top of each other.
+struct LabelSpec {
+    x: f32,
+    /// Resolved y (top of label rect). Starts as the preferred position
+    /// and is pushed downward by [`resolve_label_overlaps`] as needed.
+    y: f32,
+    w: f32,
+    text: String,
+    text_color: Color,
+    bg_color: Color,
+}
+
+// ---------------------------------------------------------------------------
+// Helper types
+// ---------------------------------------------------------------------------
+
+/// Identifies one specific classifiable object by its position in the level.
+/// Indices are into `Level::sprite_instances` / `Level::collision_shapes`.
+/// Using a positional reference (not the string ID) lets two objects that
+/// happen to share an ID still be navigated / edited independently.
+#[derive(Clone, PartialEq, Debug)]
+enum ObjectRef {
+    Sprite(usize),
+    CollisionShape(usize),
+}
+
+/// Which field is currently being edited on the focused object.
+#[derive(Clone, PartialEq, Debug)]
+enum EditMode {
+    Tag,
+    ObjectId,
+}
+
 /// The primitive the left mouse button currently places.
 #[derive(Clone, Copy, PartialEq)]
 enum Tool {
@@ -31,14 +80,28 @@ enum Tool {
     Circle,
 }
 
+/// What a left-drag is currently doing in a shape layer.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum DragAction {
+    /// Dragging on empty space to create a brand-new shape.
+    NewShape,
+    /// Dragging to redefine the geometry of an already-selected shape.
+    RedrawShape(usize),
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Layer {
     SpritePlanning,
     CollisionPlanning,
+    ClassificationPlanning,
 }
 
-/// Color choices, selectable with the number keys 1–6.
+/// Color choices for shapes, selectable with the number keys 1–6.
 const PALETTE: [Color; 6] = [RED, ORANGE, GOLD, LIME, SKYBLUE, VIOLET];
+
+// ---------------------------------------------------------------------------
+// Startup config (written before `run::<Editor>` then read in `init`)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 struct StartupConfig {
@@ -49,40 +112,75 @@ struct StartupConfig {
 
 static STARTUP: OnceLock<StartupConfig> = OnceLock::new();
 
+// ---------------------------------------------------------------------------
+// Random ID generation
+// ---------------------------------------------------------------------------
+
+/// Generate a short random-looking 6-character lowercase alphanumeric ID.
+/// Uses a global atomic counter mixed with sub-second time so IDs remain
+/// unique even when called many times in rapid succession.
+fn random_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64;
+    // Mix with a multiplicative hash so closely-timed calls look different.
+    let mut h = nanos.wrapping_add(seq.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1));
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    let charset: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut id = String::with_capacity(6);
+    let mut val = h;
+    for _ in 0..6 {
+        id.push(charset[(val % 36) as usize] as char);
+        val /= 36;
+    }
+    id
+}
+
+// ---------------------------------------------------------------------------
+// Editor struct
+// ---------------------------------------------------------------------------
+
 struct Editor {
     current_path: String,
     level: Level,
     active_layer: Layer,
     tool: Tool,
     color: Color,
-    /// Where (in world space) the left button went down, while a drag is in
-    /// progress.
     drag_start: Option<Vec2D>,
-    /// Cursor in screen (canvas) space; the crosshair is drawn here.
+    drag_action: Option<DragAction>,
+    selected_shape: Option<usize>,
     mouse: Vec2D,
-    /// Where the camera looks (world point at the screen's top-left when zoom
-    /// is 1). Panned with the middle mouse button.
     target: Vec2D,
-    /// Camera zoom; the wheel scales it about the cursor.
     zoom: f32,
-    /// Cursor position when the middle button was last seen down, for panning.
     pan_last: Option<Vec2D>,
-    /// Transient status line (last action), shown in the HUD.
     status: String,
-    /// Whether the multiline help overlay is visible.
     show_help: bool,
-    /// Whether the current in-memory level differs from the last saved/reloaded state.
     is_dirty: bool,
     // --- Sprite support ---
-    /// PNG paths found in sprites/ at startup, sorted alphabetically.
     available_sprites: Vec<String>,
-    /// Index into `available_sprites` for the sprite currently selected in the picker.
     selected_sprite: Option<usize>,
-    /// Uniform scale applied to the next placed sprite.
     sprite_scale: f32,
-    /// GPU textures keyed by path, loaded lazily on selection / placement.
     sprite_cache: HashMap<String, Texture>,
+    // --- Classification layer ---
+    /// tag string → display color
+    tag_colors: HashMap<String, Color>,
+    /// Which object is keyboard-focused (arrow key selection).
+    focused_object: Option<ObjectRef>,
+    /// Active text edit: (target object, what we're editing, current buffer).
+    /// While `Some`, all printable keys feed the buffer.
+    editing_object: Option<(ObjectRef, EditMode, String)>,
 }
+
+// ---------------------------------------------------------------------------
+// Editor helpers
+// ---------------------------------------------------------------------------
 
 impl Editor {
     fn selected_sprite_name(&self) -> &str {
@@ -97,7 +195,76 @@ impl Editor {
             .unwrap_or("none")
     }
 
-    /// Find the topmost sprite instance under `p` in world space.
+    /// Bounding rect `(x, y, w, h)` for a sprite instance.
+    fn sprite_bounding_rect(&self, inst: &SpriteInstance) -> (f32, f32, f32, f32) {
+        if let Some(tex) = self.sprite_cache.get(&inst.path) {
+            (
+                inst.x,
+                inst.y,
+                tex.width() as f32 * inst.scale,
+                tex.height() as f32 * inst.scale,
+            )
+        } else {
+            (
+                inst.x,
+                inst.y,
+                GRID_SIZE * inst.scale,
+                GRID_SIZE * inst.scale,
+            )
+        }
+    }
+
+    /// String ID of the given object (borrows from the level).
+    fn object_id<'a>(&'a self, obj: &ObjectRef) -> &'a str {
+        match obj {
+            ObjectRef::Sprite(i) => &self.level.sprite_instances[*i].id,
+            ObjectRef::CollisionShape(i) => self.level.collision_shapes[*i].id(),
+        }
+    }
+
+    /// Overwrite the string ID of the given object.
+    fn object_set_id(&mut self, obj: &ObjectRef, new_id: String) {
+        match obj {
+            ObjectRef::Sprite(i) => self.level.sprite_instances[*i].id = new_id,
+            ObjectRef::CollisionShape(i) => self.level.collision_shapes[*i].set_id(new_id),
+        }
+    }
+
+    /// Current tag for the given object (falls back to `"static"`).
+    fn object_tag<'a>(&'a self, obj: &ObjectRef) -> &'a str {
+        self.level.get_tag(self.object_id(obj)).unwrap_or("static")
+    }
+
+    /// All classifiable objects in display order (sprites first, then shapes).
+    fn ordered_objects(&self) -> Vec<ObjectRef> {
+        let mut refs = Vec::new();
+        for i in 0..self.level.sprite_instances.len() {
+            refs.push(ObjectRef::Sprite(i));
+        }
+        for i in 0..self.level.collision_shapes.len() {
+            refs.push(ObjectRef::CollisionShape(i));
+        }
+        refs
+    }
+
+    /// Object under the cursor in world space (`None` if nothing there).
+    fn classify_object_at(&self, world: Vec2D) -> Option<ObjectRef> {
+        for i in (0..self.level.sprite_instances.len()).rev() {
+            let inst = &self.level.sprite_instances[i];
+            let (bx, by, bw, bh) = self.sprite_bounding_rect(inst);
+            if world.x >= bx && world.x <= bx + bw && world.y >= by && world.y <= by + bh {
+                return Some(ObjectRef::Sprite(i));
+            }
+        }
+        for i in (0..self.level.collision_shapes.len()).rev() {
+            if self.level.collision_shapes[i].contains(world) {
+                return Some(ObjectRef::CollisionShape(i));
+            }
+        }
+        None
+    }
+
+    /// Topmost sprite instance under `p` in world space (returns list index).
     fn sprite_at(&self, p: Vec2D) -> Option<usize> {
         self.level.sprite_instances.iter().rposition(|s| {
             if let Some(tex) = self.sprite_cache.get(&s.path) {
@@ -114,6 +281,7 @@ impl Editor {
         match self.active_layer {
             Layer::SpritePlanning => "Sprite",
             Layer::CollisionPlanning => "Collision",
+            Layer::ClassificationPlanning => "Classification",
         }
     }
 
@@ -121,6 +289,7 @@ impl Editor {
         match layer {
             Layer::SpritePlanning => BLUE,
             Layer::CollisionPlanning => RED,
+            Layer::ClassificationPlanning => PURPLE,
         }
     }
 
@@ -128,6 +297,7 @@ impl Editor {
         match self.active_layer {
             Layer::SpritePlanning => &self.level.sprite_shapes,
             Layer::CollisionPlanning => &self.level.collision_shapes,
+            Layer::ClassificationPlanning => &[],
         }
     }
 
@@ -135,6 +305,7 @@ impl Editor {
         match self.active_layer {
             Layer::SpritePlanning => &mut self.level.sprite_shapes,
             Layer::CollisionPlanning => &mut self.level.collision_shapes,
+            Layer::ClassificationPlanning => &mut self.level.sprite_shapes,
         }
     }
 
@@ -142,6 +313,7 @@ impl Editor {
         match self.active_layer {
             Layer::SpritePlanning => &self.level.collision_shapes,
             Layer::CollisionPlanning => &self.level.sprite_shapes,
+            Layer::ClassificationPlanning => &[],
         }
     }
 
@@ -151,8 +323,6 @@ impl Editor {
         }
     }
 
-    /// The current view. `offset` is the origin so that at `target = 0`,
-    /// `zoom = 1` world coordinates map 1:1 to the screen.
     fn camera(&self) -> Camera2D {
         Camera2D {
             offset: Vec2D::ZERO,
@@ -162,12 +332,10 @@ impl Editor {
         }
     }
 
-    /// The cursor in world space, through the current camera.
     fn mouse_world(&self) -> Vec2D {
         self.camera().screen_to_world(self.mouse)
     }
 
-    /// Snap a world-space point to the editor grid.
     fn snap_world(&self, world: Vec2D) -> Vec2D {
         Vec2D::new(
             (world.x / GRID_SIZE).round() * GRID_SIZE,
@@ -178,31 +346,24 @@ impl Editor {
     fn current_file_label(&self) -> &str {
         Path::new(&self.current_path)
             .file_name()
-            .and_then(|name| name.to_str())
+            .and_then(|n| n.to_str())
             .unwrap_or(&self.current_path)
     }
 
     fn window_title(&self) -> String {
-        if self.is_dirty {
-            format!(
-                "{WINDOW_TITLE} — {} — {} *",
-                self.current_path,
-                self.active_layer_name()
-            )
-        } else {
-            format!(
-                "{WINDOW_TITLE} — {} — {}",
-                self.current_path,
-                self.active_layer_name()
-            )
-        }
+        let dirty = if self.is_dirty { " *" } else { "" };
+        format!(
+            "{WINDOW_TITLE} — {} — {}{}",
+            self.current_path,
+            self.active_layer_name(),
+            dirty
+        )
     }
 
     fn refresh_window_title(&self, ctx: &mut Context) {
         ctx.set_window_title(&self.window_title());
     }
 
-    /// Draw a world-space planning grid that follows the camera.
     fn draw_grid(&self, canvas: &mut Canvas) {
         let camera = self.camera();
         let top_left = camera.screen_to_world(Vec2D::ZERO);
@@ -215,41 +376,79 @@ impl Editor {
 
         for ix in min_x..=max_x {
             let x = ix as f32 * GRID_SIZE;
-            let is_major = ix.rem_euclid(GRID_MAJOR_EVERY) == 0;
-            let color = if is_major {
+            let c = if ix.rem_euclid(GRID_MAJOR_EVERY) == 0 {
                 LIGHTGRAY.with_alpha(0.30)
             } else {
                 LIGHTGRAY.with_alpha(0.12)
             };
-
             canvas.line(
                 Vec2D::new(x, top_left.y),
                 Vec2D::new(x, bottom_right.y),
                 1.0,
-                color,
+                c,
             );
         }
-
         for iy in min_y..=max_y {
             let y = iy as f32 * GRID_SIZE;
-            let is_major = iy.rem_euclid(GRID_MAJOR_EVERY) == 0;
-            let color = if is_major {
+            let c = if iy.rem_euclid(GRID_MAJOR_EVERY) == 0 {
                 LIGHTGRAY.with_alpha(0.30)
             } else {
                 LIGHTGRAY.with_alpha(0.12)
             };
-
             canvas.line(
                 Vec2D::new(top_left.x, y),
                 Vec2D::new(bottom_right.x, y),
                 1.0,
-                color,
+                c,
             );
         }
     }
 }
 
-/// Build a shape from two drag points, or `None` if it's too small to keep.
+// ---------------------------------------------------------------------------
+// Free functions
+// ---------------------------------------------------------------------------
+
+/// Update an existing shape's geometry from two drag endpoints while
+/// preserving its ID and color. The shape keeps its original type.
+fn update_shape_geometry(shape: &mut Shape, a: Vec2D, b: Vec2D) -> bool {
+    match shape {
+        Shape::Rect {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => {
+            let nx = a.x.min(b.x);
+            let ny = a.y.min(b.y);
+            let nw = (a.x - b.x).abs();
+            let nh = (a.y - b.y).abs();
+            if nw >= 2.0 && nh >= 2.0 {
+                *x = nx;
+                *y = ny;
+                *width = nw;
+                *height = nh;
+                true
+            } else {
+                false
+            }
+        }
+        Shape::Circle { x, y, radius, .. } => {
+            let nr = a.distance(b);
+            if nr >= 2.0 {
+                *x = a.x;
+                *y = a.y;
+                *radius = nr;
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Build a shape from two drag endpoints, assigning a fresh random ID.
 fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
     match tool {
         Tool::Rect => {
@@ -258,6 +457,7 @@ fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
             let width = (a.x - b.x).abs();
             let height = (a.y - b.y).abs();
             (width >= 2.0 && height >= 2.0).then_some(Shape::Rect {
+                id: random_id(),
                 x,
                 y,
                 width,
@@ -268,6 +468,7 @@ fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
         Tool::Circle => {
             let radius = a.distance(b);
             (radius >= 2.0).then_some(Shape::Circle {
+                id: random_id(),
                 x: a.x,
                 y: a.y,
                 radius,
@@ -277,25 +478,98 @@ fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
     }
 }
 
+/// Draw a rectangle outline using four line segments.
+fn draw_rect_outline(canvas: &mut Canvas, x: f32, y: f32, w: f32, h: f32, t: f32, c: Color) {
+    canvas.line(Vec2D::new(x, y), Vec2D::new(x + w, y), t, c);
+    canvas.line(Vec2D::new(x + w, y), Vec2D::new(x + w, y + h), t, c);
+    canvas.line(Vec2D::new(x + w, y + h), Vec2D::new(x, y + h), t, c);
+    canvas.line(Vec2D::new(x, y + h), Vec2D::new(x, y), t, c);
+}
+
+/// Collect all printable characters pressed this frame (letters, digits, space,
+/// comma, period). Letters are lowercase unless `shift` is true.
+fn collect_typed_chars(ctx: &Context, shift: bool) -> String {
+    let mut s = String::new();
+    for &(key, lo, hi) in &[
+        (Key::A, 'a', 'A'),
+        (Key::B, 'b', 'B'),
+        (Key::C, 'c', 'C'),
+        (Key::D, 'd', 'D'),
+        (Key::E, 'e', 'E'),
+        (Key::F, 'f', 'F'),
+        (Key::G, 'g', 'G'),
+        (Key::H, 'h', 'H'),
+        (Key::I, 'i', 'I'),
+        (Key::J, 'j', 'J'),
+        (Key::K, 'k', 'K'),
+        (Key::L, 'l', 'L'),
+        (Key::M, 'm', 'M'),
+        (Key::N, 'n', 'N'),
+        (Key::O, 'o', 'O'),
+        (Key::P, 'p', 'P'),
+        (Key::Q, 'q', 'Q'),
+        (Key::R, 'r', 'R'),
+        (Key::S, 's', 'S'),
+        (Key::T, 't', 'T'),
+        (Key::U, 'u', 'U'),
+        (Key::V, 'v', 'V'),
+        (Key::W, 'w', 'W'),
+        (Key::X, 'x', 'X'),
+        (Key::Y, 'y', 'Y'),
+        (Key::Z, 'z', 'Z'),
+        (Key::Num0, '0', '0'),
+        (Key::Num1, '1', '1'),
+        (Key::Num2, '2', '2'),
+        (Key::Num3, '3', '3'),
+        (Key::Num4, '4', '4'),
+        (Key::Num5, '5', '5'),
+        (Key::Num6, '6', '6'),
+        (Key::Num7, '7', '7'),
+        (Key::Num8, '8', '8'),
+        (Key::Num9, '9', '9'),
+        (Key::Space, ' ', ' '),
+        (Key::Comma, ',', '<'),
+        (Key::Period, '.', '>'),
+    ] {
+        if ctx.is_key_pressed(key) {
+            s.push(if shift { hi } else { lo });
+        }
+    }
+    s
+}
+
+/// Build `tag_colors` from level data, ensuring `"static"` always gets the
+/// first palette slot.
+fn build_tag_colors(level: &Level) -> HashMap<String, Color> {
+    let mut map = HashMap::new();
+    map.insert("static".to_string(), TAG_PALETTE[0]);
+    for entry in &level.classifications {
+        if !map.contains_key(&entry.tag) {
+            let idx = map.len() % TAG_PALETTE.len();
+            map.insert(entry.tag.clone(), TAG_PALETTE[idx]);
+        }
+    }
+    map
+}
+
+// ---------------------------------------------------------------------------
+// Startup helpers
+// ---------------------------------------------------------------------------
+
 fn prompt_level_path() -> io::Result<String> {
     loop {
         print!("Level path: ");
         io::stdout().flush()?;
-
         let mut line = String::new();
         io::stdin().read_line(&mut line)?;
-
         let path = line.trim();
         if !path.is_empty() {
             return Ok(path.to_string());
         }
-
         eprintln!("A level path is required.");
     }
 }
 
-/// Scan `dir` for PNG files and return their paths sorted alphabetically.
-/// Returns an empty Vec if the directory does not exist.
 fn scan_sprites(dir: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -305,7 +579,7 @@ fn scan_sprites(dir: &str) -> Vec<String> {
         .filter(|e| {
             e.path()
                 .extension()
-                .map_or(false, |ext| ext.eq_ignore_ascii_case("png"))
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
         })
         .map(|e| e.path().to_string_lossy().replace('\\', "/"))
         .collect();
@@ -315,22 +589,25 @@ fn scan_sprites(dir: &str) -> Vec<String> {
 
 fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
     if Path::new(path).exists() {
-        let level = Level::load(path)?;
-        let sprite_n = level.sprite_shapes.len();
+        let mut level = Level::load(path)?;
+        level.ensure_ids(random_id);
+        let sprite_n = level.sprite_instances.len();
         let collision_n = level.collision_shapes.len();
+        let class_n = level.classifications.len();
         Ok(StartupConfig {
             path: path.to_string(),
             level,
-            status: format!("Loaded {path} ({sprite_n} sprite, {collision_n} collision)"),
+            status: format!(
+                "Loaded {path} ({sprite_n} sprites, {collision_n} collision, {class_n} tags)"
+            ),
         })
     } else {
         if let Some(parent) = Path::new(path)
             .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
+            .filter(|p| !p.as_os_str().is_empty())
         {
             std::fs::create_dir_all(parent)?;
         }
-
         let level = Level::new();
         level.save(path)?;
         Ok(StartupConfig {
@@ -341,11 +618,15 @@ fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Game trait impl
+// ---------------------------------------------------------------------------
+
 impl Game for Editor {
     fn init(ctx: &mut Context) -> Self {
         let startup = STARTUP
             .get()
-            .expect("editor startup config should be set before run()");
+            .expect("startup config must be set before run()");
 
         let available_sprites = scan_sprites("sprites");
         let selected_sprite = if available_sprites.is_empty() {
@@ -354,7 +635,6 @@ impl Game for Editor {
             Some(0)
         };
 
-        // Pre-load textures for sprites already referenced in the level.
         let mut sprite_cache = HashMap::new();
         for inst in &startup.level.sprite_instances {
             if !sprite_cache.contains_key(&inst.path) {
@@ -363,7 +643,6 @@ impl Game for Editor {
                 }
             }
         }
-        // Also eagerly load the first available sprite for the picker preview.
         if let Some(path) = selected_sprite.and_then(|i| available_sprites.get(i)) {
             if !sprite_cache.contains_key(path) {
                 if let Ok(tex) = ctx.load_texture(path) {
@@ -372,6 +651,8 @@ impl Game for Editor {
             }
         }
 
+        let tag_colors = build_tag_colors(&startup.level);
+
         let editor = Self {
             current_path: startup.path.clone(),
             level: startup.level.clone(),
@@ -379,6 +660,8 @@ impl Game for Editor {
             tool: Tool::Rect,
             color: Self::default_layer_color(Layer::SpritePlanning),
             drag_start: None,
+            drag_action: None,
+            selected_shape: None,
             mouse: Vec2D::ZERO,
             target: Vec2D::ZERO,
             zoom: 1.0,
@@ -390,6 +673,9 @@ impl Game for Editor {
             selected_sprite,
             sprite_scale: 1.0,
             sprite_cache,
+            tag_colors,
+            focused_object: None,
+            editing_object: None,
         };
         editor.refresh_window_title(ctx);
         editor
@@ -398,64 +684,298 @@ impl Game for Editor {
     fn update(&mut self, ctx: &mut Context) {
         self.mouse = ctx.mouse_position();
 
+        // ----------------------------------------------------------------
+        // ESC: cancel active edit OR quit
+        // ----------------------------------------------------------------
         if ctx.is_key_pressed(Key::Escape) {
-            ctx.exit();
-        }
-        if ctx.is_key_pressed(Key::H) {
-            self.show_help = !self.show_help;
-            self.status = if self.show_help {
-                "Help shown".to_string()
+            if self.editing_object.is_some() {
+                self.editing_object = None;
+                self.status = "Edit cancelled".to_string();
+                return;
+            } else if self.selected_shape.take().is_some() {
+                self.drag_start = None;
+                self.drag_action = None;
+                self.status = "Deselected shape".to_string();
+                return;
             } else {
-                "Help hidden".to_string()
-            };
-        }
-        if ctx.is_key_pressed(Key::Tab) {
-            self.active_layer = match self.active_layer {
-                Layer::SpritePlanning => Layer::CollisionPlanning,
-                Layer::CollisionPlanning => Layer::SpritePlanning,
-            };
-            self.color = Self::default_layer_color(self.active_layer);
-            self.drag_start = None; // cancel any in-progress shape drag
-            self.refresh_window_title(ctx);
-            self.status = format!("Active layer: {}", self.active_layer_name());
+                ctx.exit();
+            }
         }
 
-        // --- Camera: middle-drag pans, wheel zooms about the cursor. ---
+        let is_editing = self.editing_object.is_some();
+
+        // ----------------------------------------------------------------
+        // Global shortcuts (suppressed while editing a tag/ID)
+        // ----------------------------------------------------------------
+        if !is_editing {
+            if ctx.is_key_pressed(Key::H) {
+                self.show_help = !self.show_help;
+                self.status = if self.show_help {
+                    "Help shown".into()
+                } else {
+                    "Help hidden".into()
+                };
+            }
+            if ctx.is_key_pressed(Key::Tab) {
+                self.active_layer = match self.active_layer {
+                    Layer::SpritePlanning => Layer::CollisionPlanning,
+                    Layer::CollisionPlanning => Layer::ClassificationPlanning,
+                    Layer::ClassificationPlanning => Layer::SpritePlanning,
+                };
+                self.color = Self::default_layer_color(self.active_layer);
+                self.drag_start = None;
+                self.drag_action = None;
+                self.selected_shape = None;
+                self.focused_object = None;
+                self.refresh_window_title(ctx);
+                self.status = format!("Active layer: {}", self.active_layer_name());
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Camera (always active)
+        // ----------------------------------------------------------------
         if ctx.is_mouse_button_down(MouseButton::Middle) {
             if let Some(prev) = self.pan_last {
-                // Move the world under the cursor by the screen delta.
                 self.target -= (self.mouse - prev) / self.zoom;
             }
             self.pan_last = Some(self.mouse);
         } else {
             self.pan_last = None;
         }
-
         let wheel = ctx.mouse_wheel_move();
         if wheel != 0.0 {
-            // Keep the world point under the cursor fixed while zooming.
             let before = self.mouse_world();
             self.zoom = (self.zoom * (1.0 + wheel * 0.1)).clamp(0.1, 10.0);
-            let after = self.mouse_world();
-            self.target += before - after;
+            self.target += before - self.mouse_world();
         }
-        // F resets the view to the origin at 1:1.
-        if ctx.is_key_pressed(Key::F) {
+        if !is_editing && ctx.is_key_pressed(Key::F) {
             self.target = Vec2D::ZERO;
             self.zoom = 1.0;
             self.status = "View reset".to_string();
         }
 
-        // Raw cursor in world space for hit testing, plus snapped world space
-        // for shape placement.
         let world = self.mouse_world();
         let snapped_world = self.snap_world(world);
 
+        // ================================================================
+        // CLASSIFICATION LAYER: text editing
+        // ================================================================
+        if self.active_layer == Layer::ClassificationPlanning && is_editing {
+            // Consume the current edit state so we can work with owned values,
+            // then put it back if the edit is still in progress.
+            if let Some((obj, mode, mut buf)) = self.editing_object.take() {
+                let shift = ctx.is_key_down(Key::LeftShift) || ctx.is_key_down(Key::RightShift);
+                let should_confirm = ctx.is_key_pressed(Key::Enter);
+                let should_backspace = ctx.is_key_pressed(Key::Backspace);
+                let should_tab = ctx.is_key_pressed(Key::Tab);
+                let typed = collect_typed_chars(ctx, shift);
+
+                if should_confirm {
+                    // ---- Confirm the edit ----
+                    match mode {
+                        EditMode::Tag => {
+                            let tag = {
+                                let t = buf.trim().to_string();
+                                if t.is_empty() {
+                                    "static".to_string()
+                                } else {
+                                    t
+                                }
+                            };
+                            let obj_id = self.object_id(&obj).to_string();
+                            if let Some(entry) = self
+                                .level
+                                .classifications
+                                .iter_mut()
+                                .find(|e| e.object_id == obj_id)
+                            {
+                                entry.tag = tag.clone();
+                            } else {
+                                self.level.classifications.push(ClassificationEntry {
+                                    object_id: obj_id,
+                                    tag: tag.clone(),
+                                });
+                            }
+                            if !self.tag_colors.contains_key(&tag) {
+                                let idx = self.tag_colors.len() % TAG_PALETTE.len();
+                                self.tag_colors.insert(tag.clone(), TAG_PALETTE[idx]);
+                            }
+                            self.is_dirty = true;
+                            self.refresh_window_title(ctx);
+                            self.status = format!("Tagged as '{tag}'");
+                        }
+                        EditMode::ObjectId => {
+                            let new_id = {
+                                let t = buf.trim().to_string();
+                                if t.is_empty() {
+                                    random_id()
+                                } else {
+                                    t
+                                }
+                            };
+                            self.object_set_id(&obj, new_id.clone());
+                            self.is_dirty = true;
+                            self.refresh_window_title(ctx);
+                            self.status = format!("ID set to '{new_id}'");
+                        }
+                    }
+                    // editing_object stays None (taken above)
+                    return;
+                }
+
+                // ---- Still editing: mutate the buffer ----
+                if should_backspace {
+                    buf.pop();
+                }
+
+                // Tab cycles through known tags (only in Tag mode)
+                if should_tab && mode == EditMode::Tag {
+                    let mut sorted_tags: Vec<String> = self.tag_colors.keys().cloned().collect();
+                    sorted_tags.sort();
+                    if !sorted_tags.is_empty() {
+                        let cur = sorted_tags.iter().position(|t| t == &buf);
+                        let next = if shift {
+                            match cur {
+                                None | Some(0) => sorted_tags.len() - 1,
+                                Some(i) => i - 1,
+                            }
+                        } else {
+                            match cur {
+                                None => 0,
+                                Some(i) => (i + 1) % sorted_tags.len(),
+                            }
+                        };
+                        buf = sorted_tags[next].clone();
+                    }
+                }
+
+                if !typed.is_empty() {
+                    buf.push_str(&typed);
+                }
+
+                // Put the (mutated) edit state back.
+                self.editing_object = Some((obj, mode, buf));
+            }
+            return; // Swallow all other keys while editing.
+        }
+
+        // ================================================================
+        // CLASSIFICATION LAYER: navigation and selection
+        // ================================================================
+        if self.active_layer == Layer::ClassificationPlanning {
+            let objs = self.ordered_objects();
+
+            // ---- Arrow key navigation ----
+            if !objs.is_empty() {
+                let cur_idx = self
+                    .focused_object
+                    .as_ref()
+                    .and_then(|fo| objs.iter().position(|o| o == fo));
+                let nav_fwd = ctx.is_key_pressed(Key::Right) || ctx.is_key_pressed(Key::Down);
+                let nav_bwd = ctx.is_key_pressed(Key::Left) || ctx.is_key_pressed(Key::Up);
+
+                if nav_fwd || nav_bwd {
+                    let next_idx = if nav_fwd {
+                        match cur_idx {
+                            None => 0,
+                            Some(i) => (i + 1) % objs.len(),
+                        }
+                    } else {
+                        match cur_idx {
+                            None | Some(0) => objs.len() - 1,
+                            Some(i) => i - 1,
+                        }
+                    };
+                    let next_obj = objs[next_idx].clone();
+                    let id = self.object_id(&next_obj).to_string();
+                    let tag = self.level.get_tag(&id).unwrap_or("static").to_string();
+                    self.focused_object = Some(next_obj);
+                    self.status = format!("{} | {} ({}/{})", id, tag, next_idx + 1, objs.len());
+                }
+            }
+
+            // ---- Enter: start editing the tag ----
+            if ctx.is_key_pressed(Key::Enter) {
+                if let Some(obj) = self.focused_object.clone() {
+                    let tag = self.object_tag(&obj).to_string();
+                    self.editing_object = Some((obj, EditMode::Tag, tag));
+                    self.status =
+                        "Editing tag — type, Tab=cycle existing, Enter=confirm, Esc=cancel"
+                            .to_string();
+                } else {
+                    self.status = "Use arrows to select an object first".to_string();
+                }
+            }
+
+            // ---- I: start editing the ID ----
+            if ctx.is_key_pressed(Key::I) {
+                if let Some(obj) = self.focused_object.clone() {
+                    let id = self.object_id(&obj).to_string();
+                    self.editing_object = Some((obj, EditMode::ObjectId, id));
+                    self.status = "Editing ID — type new ID, Enter=confirm, Esc=cancel".to_string();
+                } else {
+                    self.status = "Use arrows to select an object first".to_string();
+                }
+            }
+
+            // ---- Delete: clear the tag ----
+            if ctx.is_key_pressed(Key::Delete) {
+                if let Some(obj) = self.focused_object.as_ref() {
+                    let id = self.object_id(obj).to_string();
+                    self.level.classifications.retain(|e| e.object_id != id);
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Cleared tag for '{id}'");
+                }
+            }
+
+            // ---- Mouse: click to focus + immediately start tag edit ----
+            if ctx.is_mouse_button_pressed(MouseButton::Left) {
+                if let Some(obj) = self.classify_object_at(world) {
+                    let tag = self.object_tag(&obj).to_string();
+                    self.focused_object = Some(obj.clone());
+                    self.editing_object = Some((obj, EditMode::Tag, tag));
+                    self.status = "Editing tag — Tab=cycle, Enter=confirm, Esc=cancel".to_string();
+                } else {
+                    self.status = "No object here — use arrows or click an object".to_string();
+                }
+            }
+
+            // ---- R-click: clear tag of object under cursor ----
+            if ctx.is_mouse_button_pressed(MouseButton::Right) {
+                if let Some(obj) = self.classify_object_at(world) {
+                    let id = self.object_id(&obj).to_string();
+                    self.focused_object = Some(obj);
+                    self.level.classifications.retain(|e| e.object_id != id);
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Cleared tag for '{id}'");
+                }
+            }
+
+            // Z / X work on classifications in this layer
+            if ctx.is_key_pressed(Key::Z) && self.level.classifications.pop().is_some() {
+                let n = self.level.classifications.len();
+                self.is_dirty = true;
+                self.refresh_window_title(ctx);
+                self.status = format!("Undid last tag ({n} left)");
+            }
+            if ctx.is_key_pressed(Key::X) && !self.level.classifications.is_empty() {
+                self.level.classifications.clear();
+                self.is_dirty = true;
+                self.refresh_window_title(ctx);
+                self.status = "Cleared all classifications".to_string();
+            }
+        }
+
+        // ================================================================
+        // SPRITE / COLLISION LAYERS: tools, picker, placement
+        // ================================================================
         let placing_sprite =
             self.active_layer == Layer::SpritePlanning && self.selected_sprite.is_some();
 
-        // Tool / color selection only applies when drawing shapes.
-        if !placing_sprite {
+        if !placing_sprite && self.active_layer != Layer::ClassificationPlanning {
             if ctx.is_key_pressed(Key::R) {
                 self.tool = Tool::Rect;
             }
@@ -479,11 +999,9 @@ impl Game for Editor {
             }
         }
 
-        // Sprite picker controls (sprite layer only).
         if self.active_layer == Layer::SpritePlanning && !self.available_sprites.is_empty() {
             let n = self.available_sprites.len();
             let cur = self.selected_sprite.unwrap_or(0);
-
             if ctx.is_key_pressed(Key::BracketLeft) {
                 let next = if cur == 0 { n - 1 } else { cur - 1 };
                 self.selected_sprite = Some(next);
@@ -516,9 +1034,8 @@ impl Game for Editor {
             }
         }
 
-        // Left button.
+        // Left button: place
         if placing_sprite {
-            // Click to place the selected sprite at the snapped cursor.
             if ctx.is_mouse_button_pressed(MouseButton::Left) {
                 if let Some(idx) = self.selected_sprite {
                     let path = self.available_sprites[idx].clone();
@@ -534,6 +1051,7 @@ impl Game for Editor {
                         }
                     }
                     self.level.sprite_instances.push(SpriteInstance {
+                        id: random_id(),
                         path,
                         x: snapped_world.x,
                         y: snapped_world.y,
@@ -545,31 +1063,67 @@ impl Game for Editor {
                     self.status = format!("Placed sprite ({count} total)");
                 }
             }
-        } else {
-            // Drag to define a shape's size.
+        } else if self.active_layer != Layer::ClassificationPlanning {
             if ctx.is_mouse_button_pressed(MouseButton::Left) {
-                self.drag_start = Some(snapped_world);
+                let active_shapes = self.active_shapes();
+                if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
+                    self.selected_shape = Some(i);
+                    self.drag_start = Some(snapped_world);
+                    self.drag_action = Some(DragAction::RedrawShape(i));
+                    self.status = format!("Selected shape {i}; drag to redraw, Del to delete");
+                } else {
+                    self.selected_shape = None;
+                    self.drag_start = Some(snapped_world);
+                    self.drag_action = Some(DragAction::NewShape);
+                }
             }
             if ctx.is_mouse_button_released(MouseButton::Left) {
-                if let Some(start) = self.drag_start.take() {
-                    if let Some(shape) = make_shape(self.tool, start, snapped_world, self.color) {
-                        let active_shapes = self.active_shapes_mut();
-                        active_shapes.push(shape);
-                        let count = active_shapes.len();
-                        self.is_dirty = true;
-                        self.refresh_window_title(ctx);
-                        self.status = format!(
-                            "Placed shape on {} ({} total)",
-                            self.active_layer_name(),
-                            count
-                        );
+                if let (Some(start), Some(action)) =
+                    (self.drag_start.take(), self.drag_action.take())
+                {
+                    match action {
+                        DragAction::NewShape => {
+                            if let Some(shape) =
+                                make_shape(self.tool, start, snapped_world, self.color)
+                            {
+                                let active_shapes = self.active_shapes_mut();
+                                active_shapes.push(shape);
+                                let count = active_shapes.len();
+                                self.is_dirty = true;
+                                self.refresh_window_title(ctx);
+                                self.status = format!(
+                                    "Placed shape on {} ({} total)",
+                                    self.active_layer_name(),
+                                    count
+                                );
+                            }
+                        }
+                        DragAction::RedrawShape(i) => {
+                            let redrawn = {
+                                let active_shapes = self.active_shapes_mut();
+                                active_shapes.get_mut(i).is_some_and(|shape| {
+                                    update_shape_geometry(shape, start, snapped_world)
+                                })
+                            };
+                            if redrawn {
+                                self.is_dirty = true;
+                                self.refresh_window_title(ctx);
+                                self.status = format!("Redrawn shape {i}");
+                            } else {
+                                self.status =
+                                    format!("Selected shape {i}; drag to redraw, Del to delete");
+                            }
+                            self.selected_shape = Some(i);
+                        }
                     }
                 }
             }
         }
 
-        // Right click: delete topmost sprite (sprite layer only) or shape.
-        if ctx.is_mouse_button_pressed(MouseButton::Right) {
+        // Right click: delete
+        if ctx.is_mouse_button_pressed(MouseButton::Right)
+            && self.active_layer != Layer::ClassificationPlanning
+        {
             let mut deleted = false;
             if self.active_layer == Layer::SpritePlanning {
                 if let Some(i) = self.sprite_at(world) {
@@ -582,10 +1136,21 @@ impl Game for Editor {
                 }
             }
             if !deleted {
-                let active_shapes = self.active_shapes_mut();
-                if let Some(i) = active_shapes.iter().rposition(|s| s.contains(world)) {
-                    active_shapes.remove(i);
-                    let count = active_shapes.len();
+                let maybe_i = {
+                    let active_shapes = self.active_shapes_mut();
+                    active_shapes.iter().rposition(|s| s.contains(world))
+                };
+                if let Some(i) = maybe_i {
+                    let count = {
+                        let active_shapes = self.active_shapes_mut();
+                        active_shapes.remove(i);
+                        active_shapes.len()
+                    };
+                    match self.selected_shape {
+                        Some(s) if s == i => self.selected_shape = None,
+                        Some(s) if s > i => self.selected_shape = Some(s - 1),
+                        _ => {}
+                    }
                     self.is_dirty = true;
                     self.refresh_window_title(ctx);
                     self.status = format!(
@@ -597,56 +1162,84 @@ impl Game for Editor {
             }
         }
 
-        // Z undo last action on the active layer.
-        // On the sprite layer, sprite instances are tried first (they are
-        // placed last when a sprite is selected); shapes are the fallback.
-        if ctx.is_key_pressed(Key::Z) {
-            let undone = if self.active_layer == Layer::SpritePlanning
-                && !self.level.sprite_instances.is_empty()
-            {
-                self.level.sprite_instances.pop();
-                let count = self.level.sprite_instances.len();
-                self.status = format!("Undid last sprite ({count} left)");
-                true
-            } else {
+        // Delete / Backspace: remove selected shape (sprite + collision only)
+        // Backspace is included because on macOS the key labelled Delete sends
+        // Backspace; the true Delete key is Fn+Delete.
+        if self.active_layer != Layer::ClassificationPlanning
+            && (ctx.is_key_pressed(Key::Delete) || ctx.is_key_pressed(Key::Backspace))
+        {
+            if let Some(i) = self.selected_shape.take() {
                 let active_shapes = self.active_shapes_mut();
-                if active_shapes.pop().is_some() {
+                if i < active_shapes.len() {
+                    active_shapes.remove(i);
                     let count = active_shapes.len();
-                    self.status = format!(
-                        "Undid last shape on {} ({count} left)",
-                        self.active_layer_name()
-                    );
-                    true
-                } else {
-                    false
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Deleted selected shape ({count} left)");
                 }
-            };
-            if undone {
-                self.is_dirty = true;
-                self.refresh_window_title(ctx);
-            }
-        }
-        if ctx.is_key_pressed(Key::X) {
-            let active_shapes = self.active_shapes_mut();
-            if !active_shapes.is_empty() {
-                active_shapes.clear();
-                self.is_dirty = true;
-                self.refresh_window_title(ctx);
-                self.status = format!("Cleared {} layer", self.active_layer_name());
             }
         }
 
-        // S save, O reload from disk.
+        // Z/X undo / clear (sprite + collision only)
+        if self.active_layer != Layer::ClassificationPlanning {
+            if ctx.is_key_pressed(Key::Z) {
+                let undone = if self.active_layer == Layer::SpritePlanning
+                    && !self.level.sprite_instances.is_empty()
+                {
+                    self.level.sprite_instances.pop();
+                    let c = self.level.sprite_instances.len();
+                    self.status = format!("Undid last sprite ({c} left)");
+                    true
+                } else {
+                    let count = {
+                        let shapes = self.active_shapes_mut();
+                        if shapes.pop().is_some() {
+                            let c = shapes.len();
+                            self.status = format!(
+                                "Undid last shape on {} ({c} left)",
+                                self.active_layer_name()
+                            );
+                            Some(c)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(c) = count {
+                        if self.selected_shape == Some(c) {
+                            self.selected_shape = None;
+                        }
+                    }
+                    count.is_some()
+                };
+                if undone {
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                }
+            }
+            if ctx.is_key_pressed(Key::X) {
+                let shapes = self.active_shapes_mut();
+                if !shapes.is_empty() {
+                    shapes.clear();
+                    self.selected_shape = None;
+                    self.is_dirty = true;
+                    self.refresh_window_title(ctx);
+                    self.status = format!("Cleared {} layer", self.active_layer_name());
+                }
+            }
+        }
+
+        // S save / O reload (all layers)
         if ctx.is_key_pressed(Key::S) {
             self.status = match self.level.save(&self.current_path) {
                 Ok(()) => {
                     self.is_dirty = false;
                     self.refresh_window_title(ctx);
                     format!(
-                        "Saved {} ({} sprite, {} collision)",
+                        "Saved {} ({} sprites, {} collision, {} tags)",
                         self.current_path,
-                        self.level.sprite_shapes.len(),
-                        self.level.collision_shapes.len()
+                        self.level.sprite_instances.len(),
+                        self.level.collision_shapes.len(),
+                        self.level.classifications.len(),
                     )
                 }
                 Err(e) => format!("Save failed: {e}"),
@@ -654,15 +1247,20 @@ impl Game for Editor {
         }
         if ctx.is_key_pressed(Key::O) {
             self.status = match Level::load(&self.current_path) {
-                Ok(level) => {
+                Ok(mut level) => {
+                    level.ensure_ids(random_id);
+                    self.tag_colors = build_tag_colors(&level);
+                    let sn = level.sprite_instances.len();
+                    let cn = level.collision_shapes.len();
+                    let tn = level.classifications.len();
                     self.level = level;
                     self.is_dirty = false;
+                    self.editing_object = None;
+                    self.focused_object = None;
                     self.refresh_window_title(ctx);
                     format!(
-                        "Reloaded {} ({} sprite, {} collision)",
-                        self.current_path,
-                        self.level.sprite_shapes.len(),
-                        self.level.collision_shapes.len()
+                        "Reloaded {} ({sn} sprites, {cn} collision, {tn} tags)",
+                        self.current_path
                     )
                 }
                 Err(e) => format!("Load failed: {e}"),
@@ -672,19 +1270,14 @@ impl Game for Editor {
 
     fn draw(&mut self, canvas: &mut Canvas) {
         canvas.clear_background(DARKGRAY);
-
-        // Everything world-space (the level and the drag preview) goes through
-        // the camera, so panning/zooming move them together.
         canvas.begin_mode_2d(self.camera());
-
-        // Planning grid behind the level content.
         self.draw_grid(canvas);
 
-        // Sprites (always part of the sprite-planning layer).
-        let sprite_alpha = if self.active_layer == Layer::SpritePlanning {
-            1.0
-        } else {
-            0.30
+        // Sprites
+        let sprite_alpha = match self.active_layer {
+            Layer::SpritePlanning => 1.0,
+            Layer::ClassificationPlanning => 0.6,
+            Layer::CollisionPlanning => 0.30,
         };
         for inst in &self.level.sprite_instances {
             if let Some(tex) = self.sprite_cache.get(&inst.path) {
@@ -698,71 +1291,233 @@ impl Game for Editor {
             }
         }
 
-        // Planning layers: active layer is fully opaque, inactive layer fades.
-        self.draw_shape_layer(canvas, self.inactive_shapes(), 0.30);
-        self.draw_shape_layer(canvas, self.active_shapes(), 1.0);
+        match self.active_layer {
+            // --------------------------------------------------------
+            // Classification layer: bounding boxes + labels
+            // --------------------------------------------------------
+            Layer::ClassificationPlanning => {
+                self.draw_shape_layer(canvas, &self.level.sprite_shapes, 0.20);
+                self.draw_shape_layer(canvas, &self.level.collision_shapes, 0.25);
 
-        // Live preview: ghost shape being dragged, or ghost sprite following cursor.
-        if self.active_layer == Layer::SpritePlanning {
-            if let Some(idx) = self.selected_sprite {
-                if let Some(path) = self.available_sprites.get(idx) {
-                    if let Some(tex) = self.sprite_cache.get(path) {
-                        let pos = self.snap_world(self.mouse_world());
-                        canvas.draw_texture_ex(
-                            tex,
-                            pos,
-                            0.0,
-                            self.sprite_scale,
-                            WHITE.with_alpha(0.45),
-                        );
-                    }
+                // Collect outlines and deferred labels in two separate loops.
+                // Outlines are drawn immediately; labels are push-apart resolved
+                // then drawn together so no two labels overlap regardless of how
+                // the bounding boxes are spatially arranged.
+                let mut labels: Vec<LabelSpec> = Vec::new();
+
+                // --- Sprite instance outlines + label collection ---
+                for i in 0..self.level.sprite_instances.len() {
+                    let obj = ObjectRef::Sprite(i);
+                    let id_str = self.level.sprite_instances[i].id.clone();
+                    let path = self.level.sprite_instances[i].path.clone();
+                    let x = self.level.sprite_instances[i].x;
+                    let y = self.level.sprite_instances[i].y;
+                    let scale = self.level.sprite_instances[i].scale;
+                    let (bw, bh) = if let Some(tex) = self.sprite_cache.get(&path) {
+                        (tex.width() as f32 * scale, tex.height() as f32 * scale)
+                    } else {
+                        (GRID_SIZE * scale, GRID_SIZE * scale)
+                    };
+
+                    let tag = self
+                        .level
+                        .classifications
+                        .iter()
+                        .find(|e| e.object_id == id_str)
+                        .map(|e| e.tag.as_str())
+                        .unwrap_or("static");
+                    let tag_color = self.tag_colors.get(tag).copied().unwrap_or(LIGHTGRAY);
+                    let is_editing_this = self
+                        .editing_object
+                        .as_ref()
+                        .is_some_and(|(o, _, _)| o == &obj);
+                    let is_focused = !is_editing_this && self.focused_object.as_ref() == Some(&obj);
+
+                    draw_classification_outline(
+                        canvas,
+                        x,
+                        y,
+                        bw,
+                        bh,
+                        tag_color,
+                        is_focused,
+                        is_editing_this,
+                    );
+
+                    let eref = self.editing_object.as_ref().filter(|(o, _, _)| o == &obj);
+                    let text = build_label_text(&id_str, tag, eref);
+                    labels.push(LabelSpec {
+                        x,
+                        y: y - 17.0, // prefer above the sprite
+                        w: (text.len() as f32 * 7.5 + 8.0).max(40.0),
+                        text,
+                        text_color: if is_editing_this {
+                            WHITE
+                        } else if is_focused {
+                            GOLD
+                        } else {
+                            tag_color
+                        },
+                        bg_color: if is_focused || is_editing_this {
+                            BLACK.with_alpha(0.88)
+                        } else {
+                            BLACK.with_alpha(0.70)
+                        },
+                    });
+                }
+
+                // --- Collision shape outlines + label collection ---
+                for i in 0..self.level.collision_shapes.len() {
+                    let obj = ObjectRef::CollisionShape(i);
+                    let id_str = self.level.collision_shapes[i].id().to_string();
+                    let (bx, by, bw, bh) = self.level.collision_shapes[i].bounding_rect();
+
+                    let tag = self
+                        .level
+                        .classifications
+                        .iter()
+                        .find(|e| e.object_id == id_str)
+                        .map(|e| e.tag.as_str())
+                        .unwrap_or("static");
+                    let tag_color = self.tag_colors.get(tag).copied().unwrap_or(LIGHTGRAY);
+                    let is_editing_this = self
+                        .editing_object
+                        .as_ref()
+                        .is_some_and(|(o, _, _)| o == &obj);
+                    let is_focused = !is_editing_this && self.focused_object.as_ref() == Some(&obj);
+
+                    draw_classification_outline(
+                        canvas,
+                        bx,
+                        by,
+                        bw,
+                        bh,
+                        tag_color,
+                        is_focused,
+                        is_editing_this,
+                    );
+
+                    let eref = self.editing_object.as_ref().filter(|(o, _, _)| o == &obj);
+                    let text = build_label_text(&id_str, tag, eref);
+                    labels.push(LabelSpec {
+                        x: bx,
+                        y: by + bh + 3.0, // prefer below the collision shape
+                        w: (text.len() as f32 * 7.5 + 8.0).max(40.0),
+                        text,
+                        text_color: if is_editing_this {
+                            WHITE
+                        } else if is_focused {
+                            GOLD
+                        } else {
+                            tag_color
+                        },
+                        bg_color: if is_focused || is_editing_this {
+                            BLACK.with_alpha(0.88)
+                        } else {
+                            BLACK.with_alpha(0.70)
+                        },
+                    });
+                }
+
+                // Resolve any remaining overlaps, then draw all labels.
+                resolve_label_overlaps(&mut labels);
+                for spec in &labels {
+                    canvas.rectangle(spec.x, spec.y, spec.w, LABEL_H, spec.bg_color);
+                    canvas.text(
+                        &spec.text,
+                        spec.x + 3.0,
+                        spec.y + 1.0,
+                        12.0,
+                        spec.text_color,
+                    );
                 }
             }
-        } else if let Some(start) = self.drag_start {
-            if let Some(shape) = make_shape(
-                self.tool,
-                start,
-                self.snap_world(self.mouse_world()),
-                self.color.with_alpha(0.5),
-            ) {
-                shape.draw(canvas);
+
+            // --------------------------------------------------------
+            // Sprite / collision layers: normal editing view
+            // --------------------------------------------------------
+            _ => {
+                self.draw_shape_layer(canvas, self.inactive_shapes(), 0.30);
+                self.draw_shape_layer(canvas, self.active_shapes(), 1.0);
+
+                // Highlight the selected shape.
+                if let Some(i) = self.selected_shape {
+                    if let Some(shape) = self.active_shapes().get(i) {
+                        let (x, y, w, h) = shape.bounding_rect();
+                        draw_rect_outline(canvas, x, y, w, h, 2.0, WHITE);
+                    }
+                }
+
+                if self.active_layer == Layer::SpritePlanning {
+                    if let Some(idx) = self.selected_sprite {
+                        if let Some(path) = self.available_sprites.get(idx) {
+                            if let Some(tex) = self.sprite_cache.get(path) {
+                                let pos = self.snap_world(self.mouse_world());
+                                canvas.draw_texture_ex(
+                                    tex,
+                                    pos,
+                                    0.0,
+                                    self.sprite_scale,
+                                    WHITE.with_alpha(0.45),
+                                );
+                            }
+                        }
+                    }
+                } else if let Some(start) = self.drag_start {
+                    let end = self.snap_world(self.mouse_world());
+                    match self.drag_action {
+                        Some(DragAction::RedrawShape(i)) => {
+                            if let Some(mut shape) = self.active_shapes().get(i).cloned() {
+                                if update_shape_geometry(&mut shape, start, end) {
+                                    shape.with_alpha(0.5).draw(canvas);
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(shape) =
+                                make_shape(self.tool, start, end, self.color.with_alpha(0.5))
+                            {
+                                shape.draw(canvas);
+                            }
+                        }
+                    }
+                }
             }
         }
 
         canvas.end_mode_2d();
 
-        // Crosshair at the snapped placement point (screen space), so the
-        // cursor feedback matches where shapes will be created.
-        let snapped_mouse = self
+        // Crosshair
+        let sm = self
             .camera()
             .world_to_screen(self.snap_world(self.mouse_world()));
         canvas.line(
-            snapped_mouse - Vec2D::new(10.0, 0.0),
-            snapped_mouse + Vec2D::new(10.0, 0.0),
+            sm - Vec2D::new(10.0, 0.0),
+            sm + Vec2D::new(10.0, 0.0),
             1.0,
             WHITE,
         );
         canvas.line(
-            snapped_mouse - Vec2D::new(0.0, 10.0),
-            snapped_mouse + Vec2D::new(0.0, 10.0),
+            sm - Vec2D::new(0.0, 10.0),
+            sm + Vec2D::new(0.0, 10.0),
             1.0,
             WHITE,
         );
 
-        // --- HUD: info panel ---
+        // ---- HUD: info panel ----
         let save_state = if self.is_dirty { "Unsaved" } else { "Saved" };
         let save_color = if self.is_dirty { ORANGE } else { LIME };
         canvas.rectangle(20.0, 20.0, 340.0, 136.0, BLACK.with_alpha(0.8));
         canvas.text("Layer", 40.0, 34.0, 24.0, GOLD);
         canvas.text(self.active_layer_name(), 110.0, 34.0, 24.0, WHITE);
         canvas.text("Tab", 260.0, 34.0, 24.0, GOLD);
-        canvas.text("toggle", 300.0, 34.0, 20.0, LIGHTGRAY);
+        canvas.text("cycle", 300.0, 38.0, 20.0, LIGHTGRAY);
         canvas.text("State", 40.0, 76.0, 24.0, GOLD);
         canvas.text(save_state, 110.0, 76.0, 24.0, save_color);
         canvas.text("File", 40.0, 118.0, 24.0, GOLD);
         canvas.text(self.current_file_label(), 96.0, 118.0, 20.0, LIGHTGRAY);
 
-        // --- HUD: sprite picker panel (sprite layer only) ---
+        // ---- HUD: sprite picker ----
         if self.active_layer == Layer::SpritePlanning {
             canvas.rectangle(20.0, 168.0, 340.0, 104.0, BLACK.with_alpha(0.8));
             if self.available_sprites.is_empty() {
@@ -786,73 +1541,215 @@ impl Game for Editor {
             }
         }
 
-        // --- HUD: help overlay ---
+        // ---- HUD: classification tag legend + hints ----
+        if self.active_layer == Layer::ClassificationPlanning {
+            let mut sorted: Vec<(&String, &Color)> = self.tag_colors.iter().collect();
+            sorted.sort_by_key(|(k, _)| k.as_str());
+            let panel_h = 34.0 + sorted.len() as f32 * 22.0 + 12.0;
+            canvas.rectangle(20.0, 168.0, 340.0, panel_h, BLACK.with_alpha(0.8));
+            canvas.text("Tags", 40.0, 178.0, 22.0, GOLD);
+            for (i, (tag, &color)) in sorted.iter().enumerate() {
+                let py = 204.0 + i as f32 * 22.0;
+                canvas.rectangle(40.0, py, 14.0, 14.0, color);
+                canvas.text(tag, 60.0, py, 18.0, color);
+            }
+
+            let hint_y = 168.0 + panel_h + 6.0;
+            if let Some((_, mode, _)) = &self.editing_object {
+                canvas.rectangle(20.0, hint_y, 340.0, 26.0, BLACK.with_alpha(0.8));
+                let hint = match mode {
+                    EditMode::Tag => "Tab=cycle tags  Enter=confirm  Esc=cancel  Bksp",
+                    EditMode::ObjectId => "Enter=confirm  Esc=cancel  Backspace=delete",
+                };
+                canvas.text(hint, 28.0, hint_y + 5.0, 16.0, GOLD);
+            } else {
+                canvas.rectangle(20.0, hint_y, 340.0, 52.0, BLACK.with_alpha(0.8));
+                canvas.text(
+                    "Arrows=navigate  Enter=edit tag  I=edit ID",
+                    28.0,
+                    hint_y + 5.0,
+                    16.0,
+                    LIGHTGRAY,
+                );
+                canvas.text(
+                    "Del=clear tag  L-click=edit  R-click=clear",
+                    28.0,
+                    hint_y + 27.0,
+                    16.0,
+                    LIGHTGRAY,
+                );
+            }
+        }
+
+        // ---- HUD: help overlay ----
         if self.show_help {
-            canvas.rectangle(20.0, 290.0, 520.0, 400.0, BLACK.with_alpha(0.8));
+            canvas.rectangle(20.0, 250.0, 560.0, 460.0, BLACK.with_alpha(0.8));
             canvas.text("Editor controls", 40.0, 308.0, 28.0, GOLD);
 
-            canvas.text("Mouse", 40.0, 348.0, 24.0, WHITE);
+            canvas.text("Mouse", 40.0, 348.0, 22.0, WHITE);
             canvas.text(
-                "L-click/drag  Place sprite/shape",
+                "L-drag        Place new shape",
                 60.0,
                 372.0,
-                20.0,
+                19.0,
                 LIGHTGRAY,
             );
             canvas.text(
-                "R-click       Delete under cursor",
+                "L-click shape Select / drag to redraw",
                 60.0,
-                396.0,
-                20.0,
+                394.0,
+                19.0,
                 LIGHTGRAY,
             );
-            canvas.text("M-drag        Pan camera", 60.0, 420.0, 20.0, LIGHTGRAY);
-            canvas.text("Wheel         Zoom", 60.0, 444.0, 20.0, LIGHTGRAY);
+            canvas.text(
+                "R-click       Delete shape under cursor",
+                60.0,
+                416.0,
+                19.0,
+                LIGHTGRAY,
+            );
+            canvas.text(
+                "Del / Bksp    Delete selected shape",
+                60.0,
+                438.0,
+                19.0,
+                LIGHTGRAY,
+            );
+            canvas.text("M-drag        Pan camera", 60.0, 460.0, 19.0, LIGHTGRAY);
+            canvas.text("Wheel         Zoom", 60.0, 482.0, 19.0, LIGHTGRAY);
 
-            canvas.text("Shapes", 40.0, 476.0, 24.0, WHITE);
-            canvas.text("R / C    Tool   1-6  Color", 60.0, 500.0, 20.0, LIGHTGRAY);
+            canvas.text("Shapes", 40.0, 510.0, 22.0, WHITE);
+            canvas.text("R / C  Tool     1-6  Color", 60.0, 532.0, 19.0, LIGHTGRAY);
 
-            canvas.text("Sprites (sprite layer)", 40.0, 532.0, 24.0, WHITE);
-            canvas.text("[ ]  cycle    , .  scale", 60.0, 556.0, 20.0, LIGHTGRAY);
+            canvas.text("Sprites (sprite layer)", 40.0, 560.0, 22.0, WHITE);
+            canvas.text("[ ]  cycle    , .  scale", 60.0, 582.0, 19.0, LIGHTGRAY);
 
-            canvas.text("Level", 290.0, 348.0, 24.0, WHITE);
-            canvas.text("S    Save", 310.0, 372.0, 20.0, LIGHTGRAY);
-            canvas.text("O    Reload", 310.0, 396.0, 20.0, LIGHTGRAY);
-            canvas.text("Tab  Toggle layer", 310.0, 420.0, 20.0, LIGHTGRAY);
-            canvas.text("Z    Undo last shape", 310.0, 444.0, 20.0, LIGHTGRAY);
-            canvas.text("X    Clear layer shapes", 310.0, 468.0, 20.0, LIGHTGRAY);
+            canvas.text("Classification layer", 40.0, 610.0, 22.0, WHITE);
+            canvas.text(
+                "Arrows  navigate    Enter  edit tag",
+                60.0,
+                632.0,
+                19.0,
+                LIGHTGRAY,
+            );
+            canvas.text("I  edit ID    Del  clear tag", 60.0, 652.0, 19.0, LIGHTGRAY);
+            canvas.text(
+                "Tab (in edit)  cycle existing tags",
+                60.0,
+                672.0,
+                19.0,
+                LIGHTGRAY,
+            );
 
-            canvas.text("View", 290.0, 500.0, 24.0, WHITE);
-            canvas.text("F    Reset view", 310.0, 524.0, 20.0, LIGHTGRAY);
-            canvas.text("H    Toggle help", 310.0, 548.0, 20.0, LIGHTGRAY);
-            canvas.text("Esc  Quit", 310.0, 572.0, 20.0, LIGHTGRAY);
+            canvas.text("Level", 310.0, 348.0, 22.0, WHITE);
+            canvas.text("S    Save", 330.0, 372.0, 19.0, LIGHTGRAY);
+            canvas.text("O    Reload", 330.0, 394.0, 19.0, LIGHTGRAY);
+            canvas.text("Tab  Cycle layer", 330.0, 416.0, 19.0, LIGHTGRAY);
+            canvas.text("Z    Undo last", 330.0, 438.0, 19.0, LIGHTGRAY);
+            canvas.text("X    Clear layer", 330.0, 460.0, 19.0, LIGHTGRAY);
+
+            canvas.text("View", 310.0, 488.0, 22.0, WHITE);
+            canvas.text("F    Reset view", 330.0, 510.0, 19.0, LIGHTGRAY);
+            canvas.text("H    Toggle help", 330.0, 532.0, 19.0, LIGHTGRAY);
+            canvas.text("Esc  Quit / cancel", 330.0, 554.0, 19.0, LIGHTGRAY);
         }
 
         canvas.text(&self.status, 20.0, RENDER_H as f32 - 32.0, 22.0, GOLD);
     }
 }
 
+/// Draw the bounding-box outline for one classifiable object.
+/// Labels are NOT drawn here — they are collected into [`LabelSpec`]s,
+/// overlap-resolved by [`resolve_label_overlaps`], and rendered afterwards.
+fn draw_classification_outline(
+    canvas: &mut Canvas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    tag_color: Color,
+    is_focused: bool,
+    is_editing: bool,
+) {
+    let (thickness, box_color) = if is_editing {
+        (3.0, WHITE)
+    } else if is_focused {
+        (2.5, GOLD)
+    } else {
+        (1.5, tag_color.with_alpha(0.9))
+    };
+    draw_rect_outline(canvas, x, y, w, h, thickness, box_color);
+}
+
+/// Build the label string for a classifiable object.
+///
+/// Format:
+/// - Normal:      `"id | tag"`
+/// - Editing tag: `"id | buffer|"`
+/// - Editing ID:  `"buffer| | tag"`
+fn build_label_text(
+    id: &str,
+    tag: &str,
+    edit_state: Option<&(ObjectRef, EditMode, String)>,
+) -> String {
+    if let Some((_, mode, buf)) = edit_state {
+        match mode {
+            EditMode::Tag => format!("{id} | {buf}|"),
+            EditMode::ObjectId => format!("{buf}| | {tag}"),
+        }
+    } else {
+        format!("{id} | {tag}")
+    }
+}
+
+/// Push [`LabelSpec`]s apart so that no two labels whose x-ranges overlap
+/// are rendered on top of each other.
+///
+/// Algorithm: sort by preferred y, then do an O(n²) forward pass — each
+/// label can push every subsequent label downward if they share an x-range
+/// and are too close vertically. Because pushed labels are only ever moved
+/// downward, and j > i in the inner loop sees the already-updated y of i,
+/// cascades propagate correctly in a single pass.
+fn resolve_label_overlaps(labels: &mut Vec<LabelSpec>) {
+    labels.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal));
+    let n = labels.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            // Only push if the two labels share a horizontal band.
+            let x_overlap =
+                labels[j].x < labels[i].x + labels[i].w && labels[j].x + labels[j].w > labels[i].x;
+            if x_overlap {
+                let needed = labels[i].y + LABEL_H + LABEL_GAP;
+                if labels[j].y < needed {
+                    labels[j].y = needed;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
 fn main() {
     let path = match prompt_level_path() {
-        Ok(path) => path,
+        Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to read level path: {e}");
             std::process::exit(1);
         }
     };
-
     let startup = match load_or_create_level(&path) {
-        Ok(startup) => startup,
+        Ok(s) => s,
         Err(e) => {
             eprintln!("Failed to open or create level at {path}: {e}");
             std::process::exit(1);
         }
     };
-
     STARTUP
         .set(startup)
-        .expect("editor startup config should only be set once");
-
+        .expect("startup config should only be set once");
     run::<Editor>(Config {
         width: 1920,
         height: 1080,
