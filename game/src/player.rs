@@ -49,7 +49,7 @@ impl Player {
             pos: Vec2D::ZERO,
             // Hit-box sized to the drawn duck (32×32 frame at SPRITE_SCALE 1).
             shape: Vec2D::new(28.0, 28.0),
-            speed: 500.0, // Maximum movement speed (px/s)
+            speed: 150.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
             chain_offset: Vec2D::new(14.0, 14.0), // Tether at the hit-box centre
             // Loop the idle row to start; `input_direction` switches to walking.
