@@ -81,10 +81,10 @@ impl Ui {
         ];
         let credits_texts = [
             "",
+            "Ana Clara Zoppi",
             "Lucas Miranda",
             "Lucas Nogueira",
             "Nícolas Hecker",
-            "Ana Clara Zoppi",
         ];
         let config_texts = [loc.fullscreen_key(), loc.zoom_key(), loc.config_placeholder()];
 
@@ -334,6 +334,7 @@ fn main() {
         render_height: RENDER_H as u32,
         title: "Duck in Boots".to_string(),
         target_ups: 60,
+        fullscreen: true,
         centered: true,
         resizable: false,
         // 4x MSAA looks crisp on native but is expensive on the web (WebGL2
