@@ -6,12 +6,12 @@ use crate::animation::{Animation, SpriteSheet};
 const ANIM_IDLE: u32 = 0;
 const ANIM_WALK: u32 = 1;
 /// Pixel scale applied to the 32×32 ducky frames when drawn.
-const SPRITE_SCALE: f32 = 4.0;
+const SPRITE_SCALE: f32 = 1.0;
 
 /// How fast the player gathers speed toward the input direction (px/s²).
-const ACCELERATION: f32 = 6000.0;
+const ACCELERATION: f32 = 1500.0;
 /// How fast the player coasts to a stop when there is no input (px/s²).
-const FRICTION: f32 = 2000.0;
+const FRICTION: f32 = 4000.0;
 /// Below this speed (px/s) the player is treated as idle (animation/facing).
 const MOVING_EPS: f32 = 1.0;
 
@@ -43,18 +43,19 @@ impl Player {
     pub fn new(sheet: SpriteSheet) -> Player {
         Self {
             pos: Vec2D::ZERO,
-            shape: Vec2D::new(100.0, 100.0), // Player hit-box size
-            speed: 500.0,                    // Maximum movement speed (px/s)
+            // Hit-box sized to the drawn duck (32×32 frame at SPRITE_SCALE 1).
+            shape: Vec2D::new(28.0, 28.0),
+            speed: 500.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
-            chain_offset: Vec2D::new(30.0, 80.0), // Tether at the hit-box centre
+            chain_offset: Vec2D::new(14.0, 14.0), // Tether at the hit-box centre
             // Loop the idle row to start; `input_direction` switches to walking.
             anim: Animation::new(sheet, ANIM_IDLE, 10.0, true),
             facing_left: false,
             portal_activated: false,
             both_portal_activated: false,
             last_portal_ativated_in: false,
-            portal_in: Circle::new(Vec2D::ZERO, 50.0),
-            portal_out: Circle::new(Vec2D::ZERO, 50.0),
+            portal_in: Circle::new(Vec2D::ZERO, 18.0),
+            portal_out: Circle::new(Vec2D::ZERO, 18.0),
             can_teleportate: true,
         }
     }

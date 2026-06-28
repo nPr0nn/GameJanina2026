@@ -17,9 +17,9 @@ use crate::player::Player;
 use crate::squeezable::Squeezables;
 
 /// Where the player spawns, in world coordinates.
-const PLAYER_START: Vec2D = Vec2D::new(640.0, 150.0);
+const PLAYER_START: Vec2D = Vec2D::new(0.0, 0.0);
 /// Where the chains are anchored, in world coordinates.
-const CHAIN_ANCHOR: Vec2D = Vec2D::new(640.0, 100.0);
+const CHAIN_ANCHOR: Vec2D = Vec2D::new(0.0, 0.0);
 /// Seconds of player stillness before the chain is allowed to freeze.
 const PLAYER_STILL_THRESHOLD: f32 = 0.01;
 /// Maximum joint displacement (px/frame) considered "totally still".
@@ -82,7 +82,7 @@ impl Gameplay {
         player.pos = player_start;
 
         let mut squeezables = Squeezables::new();
-        squeezables.spawn(Vec2D::new(1000.0, 550.0), 45.0);
+        squeezables.spawn(Vec2D::new(1000.0, 550.0), 18.0);
         let squeeze_count = Rc::new(Cell::new(0u32));
         let counter = squeeze_count.clone();
         squeezables.on_squeeze(move |_| {
@@ -96,7 +96,7 @@ impl Gameplay {
             player,
             ducky,
             debug_collisions: true,
-            zoom: 0.75,
+            zoom: 3.0,
             fps: 0,
             loc,
             level,
@@ -229,7 +229,8 @@ impl Gameplay {
         canvas.clear_background(BLACK);
 
         let camera = Camera2D {
-            target: self.player.pos + Vec2D::new(50.0, 50.0),
+            // Centre the view on the duck (offset = half the hit-box).
+            target: self.player.pos + Vec2D::new(14.0, 14.0),
             offset: Vec2D::new(640.0, 360.0),
             rotation: 0.0,
             zoom: self.zoom,
@@ -259,13 +260,13 @@ impl Gameplay {
 
         for (pos, radius) in self.squeezables.alive() {
             canvas.circle(pos, radius, MAGENTA);
-            canvas.circle(pos, radius - 6.0, PINK);
+            canvas.circle(pos, radius * 0.7, PINK);
         }
 
         for chain in &self.chains {
             chain.draw(canvas);
         }
-        canvas.circle(CHAIN_ANCHOR, 12.0, GOLD);
+        canvas.circle(CHAIN_ANCHOR, 6.0, GOLD);
 
         self.player.draw(canvas);
         canvas.end_mode_2d();
@@ -286,9 +287,9 @@ impl Gameplay {
 /// different length and tint, all starting at the player's spawn.
 fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
     vec![
-        Chain::new(CHAIN_ANCHOR, player_pos, 1600.0, 6.0, RED),
-        Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 6.0, LIME),
-        Chain::new(CHAIN_ANCHOR, player_pos, 3200.0, 6.0, SKYBLUE),
+        // Chain::new(CHAIN_ANCHOR, player_pos, 1600.0, 3.0, RED),
+        // Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 3.0, LIME),
+        // Chain::new(CHAIN_ANCHOR, player_pos, 3200.0, 3.0, SKYBLUE),
     ]
 }
 

@@ -22,4 +22,4 @@ pub(crate) const PALETTE: [Color; 6] = [RED, ORANGE, GOLD, LIME, SKYBLUE, VIOLET
 
 /// Size of the player-spawn marker box drawn at the spawn point. Matches the
 /// game's player hit-box (`player.shape`) so the marker shows the real footprint.
-pub(crate) const PLAYER_MARKER_SIZE: f32 = 100.0;
+pub(crate) const PLAYER_MARKER_SIZE: f32 = 28.0;

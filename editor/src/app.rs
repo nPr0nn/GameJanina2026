@@ -14,7 +14,7 @@ use crate::editor::Editor;
 use crate::geometry::{make_shape, update_shape_geometry};
 use crate::id::random_id;
 use crate::level_io::build_tag_colors;
-use crate::sprite_sheet::crop_and_save_sprite;
+use crate::sprite_sheet::{crop_and_save_sprite, snap_tile_selection};
 use crate::types::*;
 
 /// A loaded spritesheet plus the in-progress tile selection.
@@ -23,6 +23,9 @@ struct SheetState {
     texture: egui::TextureHandle,
     width: u32,
     height: u32,
+    /// Tile grid cell size in sheet pixels. Selections snap to whole cells; the
+    /// grid is drawn over the sheet. `1` (or less) disables snapping.
+    grid: u32,
     /// Drag start in sheet-pixel coordinates while selecting.
     drag_start: Option<egui::Pos2>,
 }
@@ -186,6 +189,7 @@ impl EditorApp {
                     texture,
                     width: w as u32,
                     height: h as u32,
+                    grid: 16,
                     drag_start: None,
                 });
                 self.ed.status = format!("Loaded sheet {w}x{h}; drag to cut a tile");
@@ -1153,10 +1157,26 @@ impl EditorApp {
             .open(&mut open)
             .default_size([700.0, 520.0])
             .show(ctx, |ui| {
-                ui.label("Drag to select a tile; release to cut it into sprites/.");
                 let Some(sheet) = self.sheet.as_mut() else {
                     return;
                 };
+                ui.horizontal(|ui| {
+                    ui.label("Grid");
+                    ui.add(
+                        egui::DragValue::new(&mut sheet.grid)
+                            .range(1..=512)
+                            .speed(1.0)
+                            .suffix(" px"),
+                    );
+                    if ui.small_button("½").clicked() {
+                        sheet.grid = (sheet.grid / 2).max(1);
+                    }
+                    if ui.small_button("2×").clicked() {
+                        sheet.grid = (sheet.grid * 2).min(512);
+                    }
+                    ui.label("· drag to select whole cells, release to cut");
+                });
+
                 // Fit the sheet into the available area.
                 let avail = ui.available_size();
                 let scale = (avail.x / sheet.width as f32)
@@ -1171,47 +1191,84 @@ impl EditorApp {
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
-                // pixel <-> screen helpers
+
+                // Grid overlay (sheet-pixel cells, drawn in screen space).
+                let g = sheet.grid.max(1) as f32;
+                if g > 1.0 {
+                    let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40));
+                    let mut x = 0.0;
+                    while x <= sheet.width as f32 {
+                        let sx = r.min.x + x * scale;
+                        painter.line_segment(
+                            [egui::pos2(sx, r.min.y), egui::pos2(sx, r.max.y)],
+                            grid_stroke,
+                        );
+                        x += g;
+                    }
+                    let mut y = 0.0;
+                    while y <= sheet.height as f32 {
+                        let sy = r.min.y + y * scale;
+                        painter.line_segment(
+                            [egui::pos2(r.min.x, sy), egui::pos2(r.max.x, sy)],
+                            grid_stroke,
+                        );
+                        y += g;
+                    }
+                }
+
+                // Screen -> sheet pixel.
                 let to_px = |p: egui::Pos2| {
                     egui::pos2(
                         ((p.x - r.min.x) / scale).clamp(0.0, sheet.width as f32),
                         ((p.y - r.min.y) / scale).clamp(0.0, sheet.height as f32),
                     )
                 };
+                let snap_selection = |a: egui::Pos2, b: egui::Pos2| -> Rect {
+                    snap_tile_selection(
+                        Vec2D::new(a.x, a.y),
+                        Vec2D::new(b.x, b.y),
+                        sheet.grid,
+                        sheet.width,
+                        sheet.height,
+                    )
+                };
+
                 if response.drag_started() {
                     sheet.drag_start = response.hover_pos().map(to_px);
                 }
                 let cur = response.hover_pos().map(to_px);
+
+                // Live snapped preview.
                 if let (Some(s), Some(c)) = (sheet.drag_start, cur) {
-                    let min = egui::pos2(s.x.min(c.x), s.y.min(c.y));
-                    let max = egui::pos2(s.x.max(c.x), s.y.max(c.y));
-                    let sel = egui::Rect::from_min_max(
-                        r.min + (min.to_vec2()) * scale,
-                        r.min + (max.to_vec2()) * scale,
+                    let sel = snap_selection(s, c);
+                    let scr = egui::Rect::from_min_size(
+                        r.min + egui::vec2(sel.x, sel.y) * scale,
+                        egui::vec2(sel.width, sel.height) * scale,
                     );
                     painter.rect_stroke(
-                        sel,
+                        scr,
                         egui::CornerRadius::ZERO,
-                        egui::Stroke::new(1.0, egui::Color32::YELLOW),
+                        egui::Stroke::new(2.0, egui::Color32::YELLOW),
                         egui::StrokeKind::Inside,
                     );
                 }
+
                 if response.drag_stopped() {
                     if let (Some(s), Some(c)) = (sheet.drag_start.take(), cur) {
-                        let x = s.x.min(c.x);
-                        let y = s.y.min(c.y);
-                        let w = (s.x - c.x).abs();
-                        let h = (s.y - c.y).abs();
-                        if w >= 1.0 && h >= 1.0 {
-                            let selection = Rect::new(x.floor(), y.floor(), w.round(), h.round());
+                        let selection = snap_selection(s, c);
+                        if selection.width >= 1.0 && selection.height >= 1.0 {
                             match crop_and_save_sprite(&sheet.path, selection, "sprites") {
                                 Ok(out) => {
                                     self.ed.add_and_select_sprite_path(out.clone());
                                     self.ensure_texture(ctx, &out);
                                     self.ed.is_dirty = true;
                                     self.title_dirty = true;
-                                    self.ed.status =
-                                        format!("Cut '{}'", self.ed.selected_sprite_name());
+                                    self.ed.status = format!(
+                                        "Cut '{}' ({}×{})",
+                                        self.ed.selected_sprite_name(),
+                                        selection.width as u32,
+                                        selection.height as u32,
+                                    );
                                 }
                                 Err(e) => self.ed.status = format!("Cut failed: {e}"),
                             }
