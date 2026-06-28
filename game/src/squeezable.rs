@@ -3,7 +3,7 @@
 //! force"), the object is crushed and disappears — and every registered
 //! listener is notified through a [`SqueezeEvent`].
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use juni::prelude::*;
 
@@ -41,14 +41,16 @@ pub struct Squeezables {
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
 
-/// A squeeze needs nearly a full revolution of winding around the object.
-const FULL_LOOP_TURNS: f32 = 0.97;
-/// How far past the surface a joint still counts as "hugging" the object.
-const CONTACT_BAND: f32 = 5.0;
-/// Minimum joints hugging the surface — proves the loop has cinched tight
-/// against the object ("a little bit of force") rather than merely winding
-/// around it from far away.
-const MIN_CONTACT_JOINTS: usize = 6;
+/// A squeeze needs at least one full revolution of winding around the object.
+const FULL_LOOP_TURNS: f32 = 1.0;
+/// Inner/outer radius factors for picking joints that belong to the loop.
+const LOOP_INNER_FACTOR: f32 = 0.95;
+const LOOP_OUTER_FACTOR: f32 = 1.10;
+/// Maximum allowed area difference between the chain loop and the object.
+const MAX_AREA_DIFF_RATIO: f32 = 0.07;
+/// Minimum overall chain stretch (path length / max length); proves force is
+/// being applied to pull the loop tight.
+const MIN_CHAIN_STRETCH: f32 = 0.999;
 
 impl Default for Squeezables {
     fn default() -> Self {
@@ -141,24 +143,29 @@ impl Squeezables {
 
 /// Does `chain` wind a full, tight loop around the circle at `center`?
 ///
-/// Two conditions must hold together:
+/// Three conditions must hold together:
 /// 1. **Winding** — the chain path's radial vector around `center` sweeps at
-///    least [`FULL_LOOP_TURNS`] of a full turn.  A chain merely draped over the
-///    object sweeps forward then back and nets ~0 turns, so only a real loop
-///    qualifies.
-/// 2. **Cinch** — at least [`MIN_CONTACT_JOINTS`] joints hug the surface,
-///    proving the loop has been pulled tight against the object.
+///    least [`FULL_LOOP_TURNS`] of a full turn.
+/// 2. **Tight loop** — the polygon area of joints hugging the object is close
+///    to the object's own area.
+/// 3. **Force** — the overall chain is stretched, proving it's being pulled
+///    tight rather than just draped.
 fn chain_cinches(chain: &Chain, center: Vec2D, radius: f32) -> bool {
-    let contact_band = radius + CONTACT_BAND;
+    let inner = radius * LOOP_INNER_FACTOR;
+    let outer = radius * LOOP_OUTER_FACTOR;
     let mut winding = 0.0f32;
-    let mut contacts = 0usize;
+    let mut loop_points: Vec<Vec2D> = Vec::new();
     let mut prev: Option<Vec2D> = None;
 
-    for p in chain.positions() {
+    for (p, _) in chain.joint_stretches() {
         let v = p - center;
-        if v.length() <= contact_band {
-            contacts += 1;
+        let dist = v.length();
+
+        // Collect joints that are hugging the object's surface.
+        if dist >= inner && dist <= outer {
+            loop_points.push(p);
         }
+
         if let Some(pv) = prev {
             // Signed angle swept from the previous radial vector to this one.
             let cross = pv.x * v.y - pv.y * v.x;
@@ -168,5 +175,43 @@ fn chain_cinches(chain: &Chain, center: Vec2D, radius: f32) -> bool {
         prev = Some(v);
     }
 
-    (winding.abs() / TAU) >= FULL_LOOP_TURNS && contacts >= MIN_CONTACT_JOINTS
+    if loop_points.len() < 3 {
+        return false;
+    }
+
+    let loop_area = loop_polygon_area(&loop_points, center);
+    let circle_area = PI * radius * radius;
+    let area_diff_ratio = (loop_area - circle_area).abs() / circle_area;
+
+    (winding.abs() / TAU) >= FULL_LOOP_TURNS
+        && area_diff_ratio <= MAX_AREA_DIFF_RATIO
+        && chain.stretch() >= MIN_CHAIN_STRETCH
+}
+
+/// Area of the polygon formed by sorting loop points by angle around `center`.
+fn loop_polygon_area(points: &[Vec2D], center: Vec2D) -> f32 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+    let mut ordered: Vec<Vec2D> = points.to_vec();
+    ordered.sort_by(|a, b| {
+        let angle_a = (a.y - center.y).atan2(a.x - center.x);
+        let angle_b = (b.y - center.y).atan2(b.x - center.x);
+        angle_a.partial_cmp(&angle_b).unwrap()
+    });
+    polygon_area(&ordered)
+}
+
+/// Shoelace formula for a simple polygon.
+fn polygon_area(points: &[Vec2D]) -> f32 {
+    let n = points.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0f32;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        sum += points[i].x * points[j].y - points[j].x * points[i].y;
+    }
+    sum.abs() * 0.5
 }
