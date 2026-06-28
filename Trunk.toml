@@ -1,5 +1,10 @@
 [build]
 target = "index.html"
+# Emit *relative* asset URLs (`./game-….js` instead of `/game-….js`). Hosts like
+# itch.io serve the uploaded zip from a sub-path, so absolute `/…` URLs resolve
+# to the domain root and 404. Relative URLs work both there and under
+# `trunk serve` (served from `/`).
+public_url = "./"
 
 [serve]
 # Bind an explicit loopback address. Trunk otherwise advertises
