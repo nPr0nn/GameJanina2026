@@ -14,6 +14,8 @@ use crate::chain::Chain;
 use crate::collision::{depenetrate_aabb, push_rect_out_of_aabb, resolve_aabb, Collider};
 use crate::loc::Loc;
 use crate::player::Player;
+use crate::portal::Portals;
+use crate::portal_chain::PortalChain;
 use crate::squeezable::Squeezables;
 
 /// Where the player spawns, in world coordinates.
@@ -168,7 +170,16 @@ pub struct Gameplay {
     /// Player spawn in world coordinates: the level's authored point, or the
     /// `PLAYER_START` fallback. Reused by `reset`.
     player_start: Vec2D,
-    chains: Vec<Chain>,
+    chains: Vec<PortalChain>,
+    /// Player-placed portal pairs the chains thread through.
+    portals: Portals,
+    /// Exit circles of the player's active portal crossings, newest last. Drives
+    /// the lockstep split/merge applied to every chain.
+    crossing_exits: Vec<Circle>,
+    /// The portal circle the player is currently standing in (just teleported
+    /// into). Ignored for crossing detection until the player leaves it, so a
+    /// single crossing fires once. Generalizes the old `can_teleportate` flag.
+    crossing_guard: Option<Circle>,
     prev_player_pos: Vec2D,
     player_still_for: f32,
     /// Round objects that get crushed when a chain loops tight around them.
@@ -214,6 +225,9 @@ impl Gameplay {
 
         Self {
             chains: new_chains(player.pos),
+            portals: Portals::new(),
+            crossing_exits: Vec::new(),
+            crossing_guard: None,
             prev_player_pos: player.pos,
             player_still_for: 0.0,
             player,
@@ -241,6 +255,9 @@ impl Gameplay {
         self.player = Player::new(self.ducky.clone());
         self.player.pos = self.player_start;
         self.chains = new_chains(self.player.pos);
+        self.portals = Portals::new();
+        self.crossing_exits.clear();
+        self.crossing_guard = None;
         self.zoom = 1.0;
         self.squeezables.revive_all();
         self.squeeze_count.set(0);
@@ -277,6 +294,12 @@ impl Gameplay {
         // Integrate the player's velocity from input (acceleration + friction).
         self.player.input_direction(ctx);
 
+        // Place a portal at the player's centre on Space (alternates the two
+        // circles of a pair; every completed pair is kept).
+        if ctx.is_key_pressed(Key::Space) {
+            self.portals.place(self.player.chain_point());
+        }
+
         // ── Collision phase ─────────────────────────────────────────────────
         // Move the player continuously by its velocity (sliding on the static
         // world) and shove any movable box it runs into. Then rebuild the full
@@ -286,6 +309,7 @@ impl Gameplay {
         self.rebuild_move_colliders();
         self.move_player_and_push(ctx);
         self.rebuild_colliders();
+        self.handle_portal_crossing();
         self.step_chains(ctx);
         self.constrain_player_to_chains();
         self.depenetrate_player();
@@ -301,8 +325,10 @@ impl Gameplay {
             chain.set_end(end);
         }
 
-        // Crush any object a chain has cinched tight.
-        self.squeezables.update(&self.chains);
+        // Crush any object a chain has cinched tight. Cinching is checked over
+        // every snippet of every chain (flattened to the slice it expects).
+        let snippets: Vec<&Chain> = self.chains.iter().flat_map(|c| c.snippets()).collect();
+        self.squeezables.update(&snippets);
     }
 
     /// Rebuild the full per-frame collider set (used by the chains and the final
@@ -564,9 +590,53 @@ impl Gameplay {
             chain.set_start(CHAIN_ANCHOR);
             chain.set_end(end);
             if !chains_frozen {
-                chain.update(ctx.dt, &self.colliders);
+                chain.update_active(ctx.dt, &self.colliders);
+            }
+            // Re-straighten frozen snippets every frame so they track how much
+            // rope the active snippet is pulling through (cheap even when frozen).
+            chain.apply_pullthrough();
+        }
+    }
+
+    /// Detect the player crossing a portal and apply it to every chain in
+    /// lockstep. Re-entering the exit circle of the most recent crossing
+    /// *merges* (undoes) that crossing; entering any other portal circle
+    /// *splits* a new snippet. `crossing_guard` debounces the circle the player
+    /// is standing in so a crossing fires exactly once.
+    fn handle_portal_crossing(&mut self) {
+        let pt = self.player.chain_point();
+
+        // Re-arm the guard once the player has left the circle they teleported
+        // into, so the same circle can trigger again later.
+        if let Some(guard) = self.crossing_guard {
+            if !guard.intersects_point(pt) {
+                self.crossing_guard = None;
             }
         }
+
+        let Some((entry, exit)) = self.portals.find_entry(pt, self.crossing_guard) else {
+            return;
+        };
+
+        // Teleport the player to the exit, keeping the centre-to-corner offset.
+        self.player.pos = exit.center - self.player.chain_offset;
+        let player_pt = self.player.chain_point();
+
+        if self.crossing_exits.last() == Some(&entry) {
+            // Went back the same way through the most recent crossing → merge.
+            for chain in &mut self.chains {
+                chain.merge(player_pt);
+            }
+            self.crossing_exits.pop();
+        } else {
+            // A new forward crossing → split a fresh snippet on every chain.
+            for chain in &mut self.chains {
+                chain.split(entry.center, exit.center, player_pt);
+            }
+            self.crossing_exits.push(exit);
+        }
+        // Ignore the circle we now stand in until the player walks out of it.
+        self.crossing_guard = Some(exit);
     }
 
     /// Constrain the player so each chain's attachment point stays within its
@@ -577,7 +647,7 @@ impl Gameplay {
         for _ in 0..CHAIN_CLAMP_ITERS {
             let mut target = self.player.chain_point();
             for chain in &self.chains {
-                let (tether, free_len) = chain.player_tether();
+                let (tether, free_len) = chain.active_tether();
                 let dist = tether.distance(target);
                 if dist > free_len {
                     let dir = (target - tether).try_normalize().unwrap_or(-Vec2D::Y);
@@ -707,7 +777,7 @@ impl Gameplay {
         // Draw the chains largest-first so the shortest ends up stacked on top.
         // Opacity ramps from full on the topmost (shortest) chain down toward
         // zero on the longest, so the deeper layers fade out.
-        let mut ordered: Vec<&Chain> = self.chains.iter().collect();
+        let mut ordered: Vec<&PortalChain> = self.chains.iter().collect();
         ordered.sort_by(|a, b| b.max_length().total_cmp(&a.max_length()));
         let n = ordered.len();
         for (i, chain) in ordered.iter().enumerate() {
@@ -717,6 +787,10 @@ impl Gameplay {
         }
         canvas.circle(CHAIN_ANCHOR, 6.0, GOLD);
 
+        // Portals on top of the chains so the crossing points stay visible.
+        self.portals.draw(canvas);
+
+        self.player.draw(canvas);
         canvas.end_mode_2d();
 
         canvas.text(&self.loc.fps(self.fps), 20.0, 20.0, 28.0, LIME);
@@ -733,11 +807,11 @@ impl Gameplay {
 
 /// Build the three chains that tether the player to `CHAIN_ANCHOR`, each with a
 /// different length and tint, all starting at the player's spawn.
-fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
+fn new_chains(player_pos: Vec2D) -> Vec<PortalChain> {
     vec![
-        // Chain::new(CHAIN_ANCHOR, player_pos, 1600.0, 3.0, RED),
-        // Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 3.0, LIME),
-        // Chain::new(CHAIN_ANCHOR, player_pos, 3200.0, 3.0, SKYBLUE),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 1600.0, 3.0, RED),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 2400.0, 3.0, LIME),
+        PortalChain::new(CHAIN_ANCHOR, player_pos, 3200.0, 3.0, SKYBLUE),
     ]
 }
 

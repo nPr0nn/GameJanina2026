@@ -141,12 +141,18 @@ impl Squeezables {
     /// looped tight, and fire the registered listeners for each crush.
     ///
     /// Call once per frame, after the chains have been simulated.
-    pub fn update(&mut self, chains: &[Chain]) {
+    pub fn update(&mut self, chains: &[&Chain]) {
         // 1. Snapshot which living object each chain is cinching this frame.
         let cinched: Vec<bool> = self
             .items
             .iter()
-            .map(|s| s.alive && chains.iter().any(|c| chain_cinches(c, s.pos, s.radius)))
+            .map(|s| {
+                s.alive
+                    && chains
+                        .iter()
+                        .copied()
+                        .any(|c| chain_cinches(c, s.pos, s.radius))
+            })
             .collect();
 
         // 2. Decide who is crushed. An ungrouped object crushes on its own; a

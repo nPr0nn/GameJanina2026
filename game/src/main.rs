@@ -10,6 +10,8 @@ mod animation;
 mod collision;
 mod player;
 mod chain;
+mod portal;
+mod portal_chain;
 mod squeezable;
 mod gameplay;
 mod transition;

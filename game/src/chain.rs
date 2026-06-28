@@ -109,6 +109,63 @@ impl Chain {
         }
     }
 
+    /// Build a chain directly from an explicit polyline of joint positions.
+    ///
+    /// Used for **frozen snippets** created when a chain is split at a portal:
+    /// the captured points become the joints verbatim and the snippet is only
+    /// ever drawn and straightened (via [`set_joint_positions`]), never
+    /// simulated. `segment_length` should match the parent chain so the links
+    /// render at a consistent size.
+    pub fn from_points(points: &[Vec2D], segment_length: f32, link_size: f32, color: Color) -> Self {
+        assert!(points.len() >= 2, "a chain snippet needs at least two points");
+        let joints: Vec<Joint> = points
+            .iter()
+            .map(|&p| Joint { pos: p, old_pos: p })
+            .collect();
+        let n = joints.len();
+        Self {
+            joints,
+            segment_length,
+            link_size,
+            damping: 0.025,
+            straightness: 0.7,
+            constraint_iterations: 20,
+            show_debug: true,
+            color,
+            was_constrained: vec![false; n],
+            obstacle_constrained: vec![false; n],
+        }
+    }
+
+    /// The chain's per-segment rest length.
+    pub fn segment_length(&self) -> f32 {
+        self.segment_length
+    }
+
+    /// The current joint positions as a polyline, in anchor → player order.
+    pub fn path_points(&self) -> Vec<Vec2D> {
+        self.joints.iter().map(|j| j.pos).collect()
+    }
+
+    /// Current geometric path length (sum of the segment distances).
+    pub fn path_length(&self) -> f32 {
+        self.joints
+            .windows(2)
+            .map(|w| w[0].pos.distance(w[1].pos))
+            .sum()
+    }
+
+    /// Overwrite every joint position. Used to straighten a frozen snippet
+    /// toward taut as rope is pulled through a portal. `old_pos` is synced so
+    /// the snippet never carries Verlet velocity if it is later re-simulated.
+    pub fn set_joint_positions(&mut self, points: &[Vec2D]) {
+        debug_assert_eq!(points.len(), self.joints.len());
+        for (j, &p) in self.joints.iter_mut().zip(points) {
+            j.pos = p;
+            j.old_pos = p;
+        }
+    }
+
     /// Pin the fixed anchor to `pos`. Call before [`update`](Self::update).
     pub fn set_start(&mut self, pos: Vec2D) {
         self.joints[0].pos = pos;
