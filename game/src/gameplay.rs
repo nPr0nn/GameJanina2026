@@ -28,6 +28,9 @@ const PLAYER_STILL_THRESHOLD: f32 = 0.01;
 const CHAIN_STILL_THRESHOLD: f32 = 0.01;
 /// Iterations of the chain-length constraint solved per frame.
 const CHAIN_CLAMP_ITERS: usize = 4;
+/// Seconds the player may linger in the portal it just exited before it is
+/// automatically stepped back through (undoing the crossing).
+const PORTAL_RETURN_SECS: f32 = 5.0;
 /// Classification tag (authored in the editor) marking a collision box the
 /// player can push around. Anything not tagged `mov` is treated as static.
 const TAG_MOVABLE: &str = "mov";
@@ -180,6 +183,9 @@ pub struct Gameplay {
     /// into). Ignored for crossing detection until the player leaves it, so a
     /// single crossing fires once. Generalizes the old `can_teleportate` flag.
     crossing_guard: Option<Circle>,
+    /// Seconds the player has continuously dwelled inside `crossing_guard`. Once
+    /// it passes [`PORTAL_RETURN_SECS`] the most recent crossing is auto-undone.
+    guard_dwell: f32,
     prev_player_pos: Vec2D,
     player_still_for: f32,
     /// Round objects that get crushed when a chain loops tight around them.
@@ -228,6 +234,7 @@ impl Gameplay {
             portals: Portals::new(),
             crossing_exits: Vec::new(),
             crossing_guard: None,
+            guard_dwell: 0.0,
             prev_player_pos: player.pos,
             player_still_for: 0.0,
             player,
@@ -258,6 +265,7 @@ impl Gameplay {
         self.portals = Portals::new();
         self.crossing_exits.clear();
         self.crossing_guard = None;
+        self.guard_dwell = 0.0;
         self.zoom = 1.0;
         self.squeezables.revive_all();
         self.squeeze_count.set(0);
@@ -309,7 +317,7 @@ impl Gameplay {
         self.rebuild_move_colliders();
         self.move_player_and_push(ctx);
         self.rebuild_colliders();
-        self.handle_portal_crossing();
+        self.handle_portal_crossing(ctx.dt);
         self.step_chains(ctx);
         self.constrain_player_to_chains();
         self.depenetrate_player();
@@ -603,14 +611,31 @@ impl Gameplay {
     /// *merges* (undoes) that crossing; entering any other portal circle
     /// *splits* a new snippet. `crossing_guard` debounces the circle the player
     /// is standing in so a crossing fires exactly once.
-    fn handle_portal_crossing(&mut self) {
+    ///
+    /// As an exception, lingering in the just-exited circle for
+    /// [`PORTAL_RETURN_SECS`] auto-undoes the most recent crossing: the guard is
+    /// dropped so the merge branch below re-triggers on that same circle.
+    fn handle_portal_crossing(&mut self, dt: f32) {
         let pt = self.player.chain_point();
 
         // Re-arm the guard once the player has left the circle they teleported
-        // into, so the same circle can trigger again later.
+        // into, so the same circle can trigger again later. While they stay put,
+        // count the dwell time and auto-return after the timeout.
         if let Some(guard) = self.crossing_guard {
-            if !guard.intersects_point(pt) {
+            if guard.intersects_point(pt) {
+                self.guard_dwell += dt;
+                // Only auto-return when there is a crossing to undo (the guard is
+                // the most recent exit). Dropping the guard lets the standard
+                // merge logic below fire on this very circle this frame.
+                if self.guard_dwell >= PORTAL_RETURN_SECS
+                    && self.crossing_exits.last() == Some(&guard)
+                {
+                    self.crossing_guard = None;
+                    self.guard_dwell = 0.0;
+                }
+            } else {
                 self.crossing_guard = None;
+                self.guard_dwell = 0.0;
             }
         }
 
@@ -635,8 +660,10 @@ impl Gameplay {
             }
             self.crossing_exits.push(exit);
         }
-        // Ignore the circle we now stand in until the player walks out of it.
+        // Ignore the circle we now stand in until the player walks out of it,
+        // and restart the dwell timer for the auto-return.
         self.crossing_guard = Some(exit);
+        self.guard_dwell = 0.0;
     }
 
     /// Constrain the player so each chain's attachment point stays within its
