@@ -166,6 +166,13 @@ impl Player {
         Rect::new(self.pos.x, self.pos.y, self.shape.x, self.shape.y)
     }
 
+    /// Smaller of the player sprite's drawn width/height in world px
+    /// (frame size × scale).
+    pub fn sprite_min_dim(&self) -> f32 {
+        let size = self.anim.frame_size() * SPRITE_SCALE;
+        size.x.min(size.y)
+    }
+
     /// World-space point where the chain attaches to the player.
     pub fn chain_point(&self) -> Vec2D {
         self.pos + self.chain_offset

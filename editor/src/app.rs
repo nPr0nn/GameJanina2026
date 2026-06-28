@@ -699,6 +699,8 @@ impl EditorApp {
                 .text("scale")
                 .logarithmic(true),
         );
+        ui.checkbox(&mut self.ed.place_background, "Place behind everything")
+            .on_hover_text("Sprites placed while this is on are flagged as background and always drawn behind every other sprite and the player.");
         ui.separator();
         if self.ed.available_sprites.is_empty() {
             ui.label("No sprites in sprites/");
@@ -874,6 +876,7 @@ impl EditorApp {
                                 x: snapped.x,
                                 y: snapped.y,
                                 scale: self.ed.sprite_scale,
+                                background: self.ed.place_background,
                             });
                             self.ed.is_dirty = true;
                             self.title_dirty = true;
@@ -988,23 +991,33 @@ impl EditorApp {
             Layer::ClassificationPlanning => 0.6,
             Layer::CollisionPlanning => 0.30,
         };
-        for inst in &self.ed.level.sprite_instances {
-            if let Some(tex) = self.ed.sprite_cache.get(&inst.path) {
-                let [tw, th] = tex.size();
-                let p0 = self.view.world_to_screen(rect, Vec2D::new(inst.x, inst.y));
-                let p1 = self.view.world_to_screen(
-                    rect,
-                    Vec2D::new(
-                        inst.x + tw as f32 * inst.scale,
-                        inst.y + th as f32 * inst.scale,
-                    ),
-                );
-                painter.image(
-                    tex.id(),
-                    egui::Rect::from_min_max(p0, p1),
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    col(WHITE.with_alpha(sprite_alpha)),
-                );
+        // Background sprites first (behind everything), then the rest — matching
+        // the game's draw order.
+        for background in [true, false] {
+            for inst in self
+                .ed
+                .level
+                .sprite_instances
+                .iter()
+                .filter(|s| s.background == background)
+            {
+                if let Some(tex) = self.ed.sprite_cache.get(&inst.path) {
+                    let [tw, th] = tex.size();
+                    let p0 = self.view.world_to_screen(rect, Vec2D::new(inst.x, inst.y));
+                    let p1 = self.view.world_to_screen(
+                        rect,
+                        Vec2D::new(
+                            inst.x + tw as f32 * inst.scale,
+                            inst.y + th as f32 * inst.scale,
+                        ),
+                    );
+                    painter.image(
+                        tex.id(),
+                        egui::Rect::from_min_max(p0, p1),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        col(WHITE.with_alpha(sprite_alpha)),
+                    );
+                }
             }
         }
 

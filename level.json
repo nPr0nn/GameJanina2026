@@ -5151,11 +5151,83 @@
     {
       "object_id": "vmqbvm",
       "tag": "mov"
+    },
+    {
+      "object_id": "bej1dt",
+      "tag": "item"
+    },
+    {
+      "object_id": "q17rol",
+      "tag": "bar"
+    },
+    {
+      "object_id": "n7sq67",
+      "tag": "bar"
+    },
+    {
+      "object_id": "32j24g",
+      "tag": "bar"
+    },
+    {
+      "object_id": "lvmefw",
+      "tag": "bar"
+    },
+    {
+      "object_id": "9s0dfh",
+      "tag": "bar"
+    },
+    {
+      "object_id": "cln7hs",
+      "tag": "bar"
+    },
+    {
+      "object_id": "mnfa4l",
+      "tag": "bar"
+    },
+    {
+      "object_id": "t3dcw2",
+      "tag": "bar"
+    },
+    {
+      "object_id": "oiclbz",
+      "tag": "bar"
+    },
+    {
+      "object_id": "8h2ip1",
+      "tag": "bar"
+    },
+    {
+      "object_id": "3j263o",
+      "tag": "bar"
+    },
+    {
+      "object_id": "ro0c6s",
+      "tag": "bar"
+    },
+    {
+      "object_id": "crut3z",
+      "tag": "bar"
+    },
+    {
+      "object_id": "xm64ry",
+      "tag": "bar"
+    },
+    {
+      "object_id": "j2wx6e",
+      "tag": "bar"
+    },
+    {
+      "object_id": "55cecx",
+      "tag": "bar"
+    },
+    {
+      "object_id": "xi3n6u",
+      "tag": "item"
     }
   ],
   "player_start": {
     "x": 992.0,
-    "y": 128.0
+    "y": 64.0
   },
   "grid_size": 32.0
 }

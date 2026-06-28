@@ -29,6 +29,12 @@ const CHAIN_CLAMP_ITERS: usize = 4;
 /// Classification tag (authored in the editor) marking a collision box the
 /// player can push around. Anything not tagged `mov` is treated as static.
 const TAG_MOVABLE: &str = "mov";
+/// Classification tag for a collision shape that becomes a chain-crushable
+/// round object (a [`Squeezables`] entry) instead of a solid wall.
+const TAG_ITEM: &str = "item";
+/// Classification tag for a solid that collides with the **player** but is
+/// transparent to the **chain** (a bar the chain can sweep past).
+const TAG_BAR: &str = "bar";
 /// Side length (world pixels) of the snap grid the movable boxes settle onto.
 /// Boxes move freely while being pushed, then snap to the nearest cell once the
 /// player lets go — so accumulated float drift is erased every time one rests.
@@ -157,8 +163,11 @@ pub struct Gameplay {
     /// game camera, the same way the editor authored it.
     level: Level,
     /// The level's *static* collision layer as colliders (world space), derived
-    /// once at load from every collision shape not tagged `mov`.
+    /// once at load from every plain (untagged/`static`) collision shape. Solid
+    /// to both the player and the chain.
     static_colliders: Vec<Collider>,
+    /// `bar`-tagged colliders: solid to the player, ignored by the chain.
+    bar_colliders: Vec<Collider>,
     /// Pushable boxes derived from the `mov`-tagged collision shapes. Their
     /// positions change at runtime as the player shoves them.
     boxes: Vec<MovableBox>,
@@ -176,12 +185,17 @@ pub struct Gameplay {
     /// Running squeeze tally, shared with the squeeze listener so the HUD can
     /// display it. Demonstrates the event/listener wiring.
     squeeze_count: Rc<Cell<u32>>,
-    /// Scratch buffer for the per-frame chain collider set (static shapes +
-    /// movable boxes + live squeezables), reused to avoid a heap allocation
-    /// every update.
+    /// Scratch buffer for the per-frame **chain** collider set (static shapes +
+    /// movable boxes + live squeezables — but *no* bars), reused to avoid a heap
+    /// allocation every update.
     colliders: Vec<Collider>,
-    /// Scratch buffer for the player's movement set: the static world plus live
-    /// squeezables, but *not* the movable boxes (those are pushed, not slid on).
+    /// Scratch buffer for the per-frame **player** solid set: the chain set plus
+    /// the bar colliders (which the chain ignores). Used by the player's chain
+    /// constraint and rest-snap.
+    player_colliders: Vec<Collider>,
+    /// Scratch buffer for the player's movement set: the static world and bars
+    /// plus live squeezables, but *not* the movable boxes (those are pushed, not
+    /// slid on).
     move_colliders: Vec<Collider>,
 }
 
@@ -196,6 +210,7 @@ impl Gameplay {
         );
         let level = load_level();
         let static_colliders = static_colliders_from(&level);
+        let bar_colliders = bar_colliders_from(&level);
         let boxes = movable_boxes_from(&level);
         let sprite_textures = load_sprite_textures(ctx, &level);
         // Spawn where the editor authored it, else the built-in default.
@@ -205,7 +220,7 @@ impl Gameplay {
         player.pos = player_start;
 
         let mut squeezables = Squeezables::new();
-        squeezables.spawn(Vec2D::new(1000.0, 550.0), 18.0);
+        spawn_item_squeezables(&level, &mut squeezables);
         let squeeze_count = Rc::new(Cell::new(0u32));
         let counter = squeeze_count.clone();
         squeezables.on_squeeze(move |_| {
@@ -224,12 +239,14 @@ impl Gameplay {
             loc,
             level,
             static_colliders,
+            bar_colliders,
             boxes,
             sprite_textures,
             player_start,
             squeezables,
             squeeze_count,
             colliders: Vec::new(),
+            player_colliders: Vec::new(),
             move_colliders: Vec::new(),
         }
     }
@@ -305,9 +322,11 @@ impl Gameplay {
         self.squeezables.update(&self.chains);
     }
 
-    /// Rebuild the full per-frame collider set (used by the chains and the final
-    /// depenetration): static colliders, then the movable boxes at their current
-    /// positions, then the currently-alive squeezables.
+    /// Rebuild the per-frame collider sets. `colliders` is the **chain** set
+    /// (static colliders + movable boxes + live squeezables — bars excluded so
+    /// the chain sweeps past them). `player_colliders` is that same set plus the
+    /// bars, which the player collides with (used by the chain constraint and
+    /// rest-snap).
     fn rebuild_colliders(&mut self) {
         self.colliders.clear();
         self.colliders.extend(self.static_colliders.iter().copied());
@@ -315,14 +334,19 @@ impl Gameplay {
             self.colliders.push(Collider::Aabb(b.rect));
         }
         self.squeezables.extend_colliders(&mut self.colliders);
+
+        self.player_colliders.clear();
+        self.player_colliders.extend(self.colliders.iter().copied());
+        self.player_colliders.extend(self.bar_colliders.iter().copied());
     }
 
-    /// Rebuild the player's *movement* collider set: the static world plus the
-    /// live squeezables, deliberately excluding the movable boxes so the player
-    /// pushes them instead of sliding off them.
+    /// Rebuild the player's *movement* collider set: the static world and bars
+    /// plus the live squeezables, deliberately excluding the movable boxes so
+    /// the player pushes them instead of sliding off them.
     fn rebuild_move_colliders(&mut self) {
         self.move_colliders.clear();
         self.move_colliders.extend(self.static_colliders.iter().copied());
+        self.move_colliders.extend(self.bar_colliders.iter().copied());
         self.squeezables.extend_colliders(&mut self.move_colliders);
     }
 
@@ -467,8 +491,11 @@ impl Gameplay {
             self.boxes.iter().map(|b| Collider::Aabb(b.rect)).collect();
         self.squeezables.extend_colliders(&mut movable);
         self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &movable);
-        self.player.pos =
-            depenetrate_aabb(self.player.pos, self.player.shape, &self.static_colliders);
+        // Immovable solids last (statics + bars): the player is always ejected
+        // from these, even if it means clipping a movable box a hair.
+        let mut solids = self.static_colliders.clone();
+        solids.extend(self.bar_colliders.iter().copied());
+        self.player.pos = depenetrate_aabb(self.player.pos, self.player.shape, &solids);
     }
 
     /// Snap the player to the grid, but only when it has come to a complete stop
@@ -481,8 +508,8 @@ impl Gameplay {
         }
         let pos = self.player.pos;
         let rect = Rect::new(pos.x, pos.y, self.player.shape.x, self.player.shape.y);
-        let (bn_x, bp_x) = blocked_axes(rect, Vec2D::X, &self.colliders);
-        let (bn_y, bp_y) = blocked_axes(rect, Vec2D::Y, &self.colliders);
+        let (bn_x, bp_x) = blocked_axes(rect, Vec2D::X, &self.player_colliders);
+        let (bn_y, bp_y) = blocked_axes(rect, Vec2D::Y, &self.player_colliders);
         let target = Vec2D::new(
             snap_axis(pos.x, bn_x, bp_x),
             snap_axis(pos.y, bn_y, bp_y),
@@ -491,7 +518,7 @@ impl Gameplay {
         if delta.length_squared() < 1e-12 {
             return;
         }
-        self.player.pos = resolve_aabb(pos, self.player.shape, delta, &self.colliders);
+        self.player.pos = resolve_aabb(pos, self.player.shape, delta, &self.player_colliders);
     }
 
     /// Draw the snap grid as thin lines in a small neighbourhood around every
@@ -524,10 +551,11 @@ impl Gameplay {
     }
 
     /// The collider set a single box is allowed to move against: the static
-    /// world plus every *other* movable box (so boxes can't be shoved through
-    /// each other).
+    /// world and bars (both solid) plus every *other* movable box (so boxes can't
+    /// be shoved through walls, bars, or each other).
     fn box_obstacles(&self, skip: usize) -> Vec<Collider> {
         let mut obstacles = self.static_colliders.clone();
+        obstacles.extend(self.bar_colliders.iter().copied());
         for (j, b) in self.boxes.iter().enumerate() {
             if j != skip {
                 obstacles.push(Collider::Aabb(b.rect));
@@ -589,36 +617,46 @@ impl Gameplay {
                 break; // converged
             }
             self.player.pos =
-                resolve_aabb(self.player.pos, self.player.shape, delta, &self.colliders);
+                resolve_aabb(self.player.pos, self.player.shape, delta, &self.player_colliders);
         }
     }
 
     /// Draw the sprite instances and the player with depth ordering.
     ///
-    /// For now only `mov`-tagged sprites participate in the Y-sort: everything
-    /// else is flat background drawn first, then the movable sprites and the
-    /// player are interleaved by the world-Y of their bottom edge ("feet"),
-    /// painted back-to-front. The player's key is the bottom of its hit box; a
-    /// sprite's is the bottom of its image.
+    /// Temporary heuristic: a sprite joins the Y-sort with the player (keyed by
+    /// the world-Y of its bottom edge, "feet", painted back-to-front) when its
+    /// smaller dimension is at least the player sprite's smaller dimension.
+    /// Sprites thinner than that (props, items) are exempt and simply drawn last,
+    /// on top of everything — a cheap stand-in until proper per-sprite anchors/
+    /// depth exist.
     fn draw_y_sorted(&self, canvas: &mut Canvas) {
-        // Static (non-movable) sprites: plain background, drawn in authored order.
+        let player_min = self.player.sprite_min_dim();
+
+        // Background sprites first, behind everything (and out of the sort).
         for (i, inst) in self.level.sprite_instances.iter().enumerate() {
-            if self.level.get_tag(&inst.id) != Some(TAG_MOVABLE) {
+            if inst.background {
                 self.draw_sprite(canvas, i);
             }
         }
 
-        // Movable sprites + the player, keyed by feet-Y. `None` is the player.
+        // (feet-Y, what to draw); `None` is the player. Small sprites sit out.
         let mut order: Vec<(f32, Option<usize>)> = Vec::new();
+        let mut small: Vec<usize> = Vec::new();
         for (i, inst) in self.level.sprite_instances.iter().enumerate() {
-            if self.level.get_tag(&inst.id) != Some(TAG_MOVABLE) {
+            if inst.background {
                 continue;
             }
-            let height = self
+            let size = self
                 .sprite_textures
                 .get(&inst.path)
-                .map_or(0.0, |t| t.height() as f32);
-            order.push((inst.y + height * inst.scale, Some(i)));
+                .map_or(Vec2D::ZERO, |t| {
+                    Vec2D::new(t.width() as f32, t.height() as f32) * inst.scale
+                });
+            if size.x.min(size.y) < player_min {
+                small.push(i);
+            } else {
+                order.push((inst.y + size.y, Some(i)));
+            }
         }
         order.push((self.player.pos.y + self.player.shape.y, None));
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -628,6 +666,11 @@ impl Gameplay {
                 Some(i) => self.draw_sprite(canvas, i),
                 None => self.player.draw(canvas),
             }
+        }
+
+        // Small sprites last, unconditionally on top.
+        for i in small {
+            self.draw_sprite(canvas, i);
         }
     }
 
@@ -738,20 +781,62 @@ fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
 /// never changes at runtime. The `mov`-tagged shapes become [`MovableBox`]es
 /// instead (see [`movable_boxes_from`]).
 fn static_colliders_from(level: &Level) -> Vec<Collider> {
+    // Solid walls: everything except the specially-tagged shapes (movable boxes,
+    // squeezable items, and player-only bars all become something else).
     level
         .collision_shapes
         .iter()
-        .filter(|shape| level.get_tag(shape.id()) != Some(TAG_MOVABLE))
-        .map(|shape| match shape {
+        .filter(|shape| {
+            let tag = level.get_tag(shape.id());
+            tag != Some(TAG_MOVABLE) && tag != Some(TAG_ITEM) && tag != Some(TAG_BAR)
+        })
+        .map(shape_to_collider)
+        .collect()
+}
+
+/// Build the `bar`-tagged colliders: solid to the player, transparent to the
+/// chain (the caller keeps these out of the chain's collider set).
+fn bar_colliders_from(level: &Level) -> Vec<Collider> {
+    level
+        .collision_shapes
+        .iter()
+        .filter(|shape| level.get_tag(shape.id()) == Some(TAG_BAR))
+        .map(shape_to_collider)
+        .collect()
+}
+
+/// Spawn a chain-crushable squeezable for every `item`-tagged collision shape,
+/// centred on the shape with a radius from its smaller half-extent (a circle
+/// item uses its own radius).
+fn spawn_item_squeezables(level: &Level, squeezables: &mut Squeezables) {
+    for shape in &level.collision_shapes {
+        if level.get_tag(shape.id()) != Some(TAG_ITEM) {
+            continue;
+        }
+        let (center, radius) = match shape {
             Shape::Rect {
                 x, y, width, height, ..
-            } => Collider::Aabb(Rect::new(*x, *y, *width, *height)),
-            Shape::Circle { x, y, radius, .. } => Collider::Circle {
-                center: Vec2D::new(*x, *y),
-                radius: *radius,
-            },
-        })
-        .collect()
+            } => (
+                Vec2D::new(x + width / 2.0, y + height / 2.0),
+                width.min(*height) / 2.0,
+            ),
+            Shape::Circle { x, y, radius, .. } => (Vec2D::new(*x, *y), *radius),
+        };
+        squeezables.spawn(center, radius);
+    }
+}
+
+/// Map a level [`Shape`] to its world-space [`Collider`].
+fn shape_to_collider(shape: &Shape) -> Collider {
+    match shape {
+        Shape::Rect {
+            x, y, width, height, ..
+        } => Collider::Aabb(Rect::new(*x, *y, *width, *height)),
+        Shape::Circle { x, y, radius, .. } => Collider::Circle {
+            center: Vec2D::new(*x, *y),
+            radius: *radius,
+        },
+    }
 }
 
 /// Build the pushable boxes from the `mov`-tagged collision rectangles.

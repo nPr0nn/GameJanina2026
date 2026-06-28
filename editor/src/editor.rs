@@ -31,6 +31,9 @@ pub(crate) struct Editor {
     pub(crate) available_sprites: Vec<String>,
     pub(crate) selected_sprite: Option<usize>,
     pub(crate) sprite_scale: f32,
+    /// When set, newly-placed sprites are flagged as background (drawn behind
+    /// everything). Toggled from the sprite-layer panel.
+    pub(crate) place_background: bool,
     /// PNG path -> loaded egui texture (with its pixel dimensions).
     pub(crate) sprite_cache: HashMap<String, egui::TextureHandle>,
     // --- Classification layer ---
@@ -60,6 +63,7 @@ impl Editor {
             available_sprites,
             selected_sprite,
             sprite_scale: 1.0,
+            place_background: false,
             sprite_cache: HashMap::new(),
             tag_colors,
             focused_object: None,
