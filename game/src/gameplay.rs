@@ -152,6 +152,10 @@ pub struct Gameplay {
     /// The ducky sprite sheet that backs the player's animation. Kept here so a
     /// `reset` can hand a fresh clone to a new `Player`.
     ducky: SpriteSheet,
+    /// Portal sprite sheets. Stored in `Gameplay` so `reset` can rebuild a fresh
+    /// `Portals` without needing the `Context` again.
+    portal_purple: SpriteSheet,
+    portal_green: SpriteSheet,
     /// When `true`, the level's collision layer is drawn on top of the level
     /// (toggle with F3). Off by default — normal play shows only the sprites.
     debug_collisions: bool,
@@ -176,6 +180,9 @@ pub struct Gameplay {
     chains: Vec<PortalChain>,
     /// Player-placed portal pairs the chains thread through.
     portals: Portals,
+    /// `true` while the old portals are playing their closing animation and a
+    /// fresh empty set has not yet been created.
+    portals_restarting: bool,
     /// Exit circles of the player's active portal crossings, newest last. Drives
     /// the lockstep split/merge applied to every chain.
     crossing_exits: Vec<Circle>,
@@ -211,6 +218,18 @@ impl Gameplay {
             32,
             32,
         );
+        let portal_purple = SpriteSheet::from_memory(
+            ctx,
+            include_bytes!("../assets/sprites/Portal/Purple Portal Sprite Sheet.png"),
+            64,
+            64,
+        );
+        let portal_green = SpriteSheet::from_memory(
+            ctx,
+            include_bytes!("../assets/sprites/Portal/Green Portal Sprite Sheet.png"),
+            64,
+            64,
+        );
         let level = load_level();
         let static_colliders = static_colliders_from(&level);
         let boxes = movable_boxes_from(&level);
@@ -231,7 +250,8 @@ impl Gameplay {
 
         Self {
             chains: new_chains(player.pos),
-            portals: Portals::new(),
+            portals: Portals::new(portal_purple.clone(), portal_green.clone()),
+            portals_restarting: false,
             crossing_exits: Vec::new(),
             crossing_guard: None,
             guard_dwell: 0.0,
@@ -239,6 +259,8 @@ impl Gameplay {
             player_still_for: 0.0,
             player,
             ducky,
+            portal_purple,
+            portal_green,
             debug_collisions: true,
             zoom: 3.0,
             fps: 0,
@@ -262,7 +284,8 @@ impl Gameplay {
         self.player = Player::new(self.ducky.clone());
         self.player.pos = self.player_start;
         self.chains = new_chains(self.player.pos);
-        self.portals = Portals::new();
+        self.portals.start_closing_all();
+        self.portals_restarting = true;
         self.crossing_exits.clear();
         self.crossing_guard = None;
         self.guard_dwell = 0.0;
@@ -302,9 +325,18 @@ impl Gameplay {
         // Integrate the player's velocity from input (acceleration + friction).
         self.player.input_direction(ctx);
 
+        // Advance portal animations. While resetting, wait for closing anims to
+        // finish before creating a fresh empty set.
+        self.portals.update(ctx.dt);
+        if self.portals_restarting && self.portals.is_finished_closing() {
+            self.portals = Portals::new(self.portal_purple.clone(), self.portal_green.clone());
+            self.portals_restarting = false;
+        }
+
         // Place a portal at the player's centre on Space (alternates the two
-        // circles of a pair; every completed pair is kept).
-        if ctx.is_key_pressed(Key::Space) {
+        // circles of a pair; every completed pair is kept). Disabled while the
+        // old portals are closing during a reset.
+        if !self.portals_restarting && ctx.is_key_pressed(Key::Space) {
             self.portals.place(self.player.chain_point());
         }
 
@@ -317,7 +349,9 @@ impl Gameplay {
         self.rebuild_move_colliders();
         self.move_player_and_push(ctx);
         self.rebuild_colliders();
-        self.handle_portal_crossing(ctx.dt);
+        if !self.portals_restarting {
+            self.handle_portal_crossing(ctx.dt);
+        }
         self.step_chains(ctx);
         self.constrain_player_to_chains();
         self.depenetrate_player();
