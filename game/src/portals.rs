@@ -14,7 +14,7 @@ use juni::prelude::*;
 const FRAME_SIZE: f32 = 64.0;
 const FRAME_COUNT: usize = 8;
 const ANIM_FPS: f32 = 12.0;
-const DRAW_SIZE: f32 = 100.0; // matches the 50.0 radius collision circle
+const DRAW_SIZE: f32 = 150.0; // matches the 75.0 radius collision circle
 
 /// Which portal the next placement targets.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,8 +37,8 @@ pub struct Portals {
 impl Portals {
     pub fn new(in_texture: Texture, out_texture: Texture) -> Self {
         Self {
-            in_portal: Circle::new(Vec2D::ZERO, 50.0),
-            out_portal: Circle::new(Vec2D::ZERO, 50.0),
+            in_portal: Circle::new(Vec2D::ZERO, 75.0),
+            out_portal: Circle::new(Vec2D::ZERO, 75.0),
             in_placed: false,
             out_placed: false,
             next: Slot::In,

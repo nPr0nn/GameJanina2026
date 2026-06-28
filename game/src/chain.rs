@@ -279,6 +279,10 @@ impl Chain {
         let n = self.joints.len();
         let r_sq = radius * radius;
         let disp = self.portal_disp;
+        // Only let a single joint cross per update. This keeps the passage
+        // natural: the chain feeds through the portal mouth one link at a time
+        // instead of several joints teleporting together.
+        let mut already_crossed = false;
         for i in (1..n - 1).rev() {
             let pos = self.joints[i].pos;
             let in_in = (pos - in_center).length_squared() < r_sq;
@@ -295,19 +299,62 @@ impl Chain {
             let ph = self.phases[i];
             let next_ph = self.phases[i + 1];
 
-            if in_in && next_ph > ph {
+            if in_in && next_ph > ph && !already_crossed {
                 // Player-side neighbour is further through the wormhole; follow
                 // it in → out.
                 self.joints[i].pos += disp;
                 self.joints[i].old_pos += disp;
                 self.phases[i] += 1;
                 self.can_teleport[i] = false;
-            } else if in_out && next_ph < ph {
+                already_crossed = true;
+            } else if in_out && next_ph < ph && !already_crossed {
                 // Player-side neighbour is further back; follow it out → in.
                 self.joints[i].pos -= disp;
                 self.joints[i].old_pos -= disp;
                 self.phases[i] -= 1;
                 self.can_teleport[i] = false;
+                already_crossed = true;
+            }
+        }
+    }
+
+    /// Pull each seam joint toward the portal mouth it threads.
+    ///
+    /// When a chain crosses a portal, the two joints that straddle the seam
+    /// behave as anchors for their respective fragments: the anchor-side joint
+    /// sits at the entry mouth and the player-side joint sits at the exit mouth.
+    /// This keeps the chain from flinging across the map and makes the two
+    /// fragments act as if they are independently tethered to the portal pair.
+    fn anchor_seams_to_portals(&mut self, in_center: Vec2D, out_center: Vec2D, obstacles: &[Collider]) {
+        let n = self.joints.len();
+        let sl = self.segment_length;
+        for i in 0..n - 1 {
+            if self.phases[i] == self.phases[i + 1] {
+                continue;
+            }
+            // Higher phase is on the `out` side (more in → out crossings).
+            let (mouth_a, mouth_b) = if self.phases[i + 1] > self.phases[i] {
+                (in_center, out_center)
+            } else {
+                (out_center, in_center)
+            };
+
+            // Keep joint i within one segment length of its mouth.
+            let delta = mouth_a - self.joints[i].pos;
+            let dist = delta.length();
+            if dist > sl {
+                let target = self.joints[i].pos + delta * ((dist - sl) / dist);
+                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles);
+                self.joints[i].pos = moved;
+            }
+
+            // Keep joint i+1 within one segment length of its mouth.
+            let delta = mouth_b - self.joints[i + 1].pos;
+            let dist = delta.length();
+            if dist > sl {
+                let target = self.joints[i + 1].pos + delta * ((dist - sl) / dist);
+                let (moved, _) = move_point_swept(self.joints[i + 1].pos, target, obstacles);
+                self.joints[i + 1].pos = moved;
             }
         }
     }
@@ -367,6 +414,7 @@ impl Chain {
             Some(p) if p.active() => {
                 self.portal_disp = p.displacement();
                 self.cross_portals(p.in_center(), p.out_center(), p.radius());
+                self.anchor_seams_to_portals(p.in_center(), p.out_center(), obstacles);
                 self.repair_phase_spikes();
             }
             _ => {
@@ -780,5 +828,48 @@ mod tests {
 
         chain.phases.iter_mut().for_each(|p| *p = 2);
         assert!(!chain.is_crossing_portal());
+    }
+
+    #[test]
+    fn only_one_joint_crosses_per_update() {
+        let mut chain = test_chain(5);
+        chain.portal_disp = Vec2D::new(200.0, 0.0);
+
+        // Both joints 1 and 2 are phase 0 with phase-1 player-side neighbours
+        // and both sit inside the in portal. Only the one closest to the player
+        // end (joint 2) should cross this frame.
+        chain.phases = vec![0, 0, 0, 1, 1];
+        chain.joints[1].pos = Vec2D::new(60.0, 0.0);
+        chain.joints[2].pos = Vec2D::new(55.0, 0.0);
+        chain.can_teleport = vec![true; 5];
+
+        chain.cross_portals(Vec2D::new(50.0, 0.0), Vec2D::new(250.0, 0.0), 30.0);
+
+        let crossings = chain.phases.iter().filter(|&&p| p == 1).count();
+        assert_eq!(crossings, 3); // joints 3, 4 were already 1, plus one new crossing
+        assert_eq!(chain.phases[2], 1);
+        assert_eq!(chain.phases[1], 0); // blocked by the one-crossing limit
+    }
+
+    #[test]
+    fn seam_anchors_to_portal_mouths() {
+        let mut chain = test_chain(5);
+        chain.portal_disp = Vec2D::new(200.0, 0.0);
+
+        // Seam between joint 2 (phase 0) and joint 3 (phase 1). Both are far
+        // from their portal mouths and should be pulled to within segment
+        // length of them.
+        chain.phases = vec![0, 0, 0, 1, 1];
+        chain.joints[2].pos = Vec2D::ZERO; // far from in portal at (50,0)
+        chain.joints[3].pos = Vec2D::new(400.0, 0.0); // far from out portal at (250,0)
+
+        chain.anchor_seams_to_portals(
+            Vec2D::new(50.0, 0.0),
+            Vec2D::new(250.0, 0.0),
+            &[],
+        );
+
+        assert!(chain.joints[2].pos.distance(Vec2D::new(50.0, 0.0)) <= chain.segment_length + 1e-4);
+        assert!(chain.joints[3].pos.distance(Vec2D::new(250.0, 0.0)) <= chain.segment_length + 1e-4);
     }
 }
