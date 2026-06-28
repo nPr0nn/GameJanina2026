@@ -8,12 +8,25 @@ const ANIM_WALK: u32 = 1;
 /// Pixel scale applied to the 32×32 ducky frames when drawn.
 const SPRITE_SCALE: f32 = 4.0;
 
+/// How fast the player gathers speed toward the input direction (px/s²).
+const ACCELERATION: f32 = 6000.0;
+/// How fast the player coasts to a stop when there is no input (px/s²).
+const FRICTION: f32 = 2000.0;
+/// Below this speed (px/s) the player is treated as idle (animation/facing).
+const MOVING_EPS: f32 = 1.0;
+
 pub struct Player {
     pub pos: Vec2D,
     pub shape: Vec2D,
+    /// Maximum movement speed in px/s (the velocity magnitude is clamped to it).
     pub speed: f32,
-    pub player_speed: f32,
+    /// Current movement velocity in px/s. Integrated from input via
+    /// [`Player::input_direction`]; the caller applies it against collision.
     pub velocity: Vec2D,
+    /// Where the chain attaches on the player, as an offset from the top-left
+    /// `pos` (so `(0,0)` is the corner, `shape/2` the centre). Tune this to move
+    /// the tether point around within the sprite.
+    pub chain_offset: Vec2D,
     /// The ducky sprite-sheet animation that represents the player on screen.
     anim: Animation,
     /// `true` when the ducky should be mirrored to face left.
@@ -31,9 +44,9 @@ impl Player {
         Self {
             pos: Vec2D::ZERO,
             shape: Vec2D::new(100.0, 100.0), // Player hit-box size
-            speed: 500.0,                    // Speed used by the chain system
-            player_speed: 500.0,             // Speed used by the movable box push
+            speed: 500.0,                    // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
+            chain_offset: Vec2D::new(30.0, 80.0), // Tether at the hit-box centre
             // Loop the idle row to start; `input_direction` switches to walking.
             anim: Animation::new(sheet, ANIM_IDLE, 10.0, true),
             facing_left: false,
@@ -46,28 +59,45 @@ impl Player {
         }
     }
 
-    /// Returns the normalized input direction based on WASD / arrow keys.
-    /// Also updates the velocity field (used by the movable box) and handles
-    /// portal activation / teleportation.
+    /// Reads WASD / arrow input and integrates the player's `velocity` from it
+    /// (acceleration toward the input direction, friction when idle, clamped to
+    /// `speed`). Also handles portal activation / teleportation. Returns the
+    /// normalized input direction for callers that need the raw intent.
     pub fn input_direction(&mut self, ctx: &Context) -> Vec2D {
         let mut dir = Vec2D::ZERO;
-        self.velocity = Vec2D::ZERO;
 
         if ctx.is_key_down(Key::W) || ctx.is_key_down(Key::Up) {
             dir.y -= 1.0;
-            self.velocity.y -= 1.0;
         }
         if ctx.is_key_down(Key::S) || ctx.is_key_down(Key::Down) {
             dir.y += 1.0;
-            self.velocity.y += 1.0;
         }
         if ctx.is_key_down(Key::A) || ctx.is_key_down(Key::Left) {
             dir.x -= 1.0;
-            self.velocity.x -= 1.0;
         }
         if ctx.is_key_down(Key::D) || ctx.is_key_down(Key::Right) {
             dir.x += 1.0;
-            self.velocity.x += 1.0;
+        }
+        if dir != Vec2D::ZERO {
+            dir = dir.normalize();
+        }
+
+        // Velocity integration: accelerate toward the input while keys are held,
+        // otherwise shed speed with friction until the player coasts to a stop.
+        if dir != Vec2D::ZERO {
+            self.velocity += dir * ACCELERATION * ctx.dt;
+            let speed = self.velocity.length();
+            if speed > self.speed {
+                self.velocity *= self.speed / speed;
+            }
+        } else {
+            let speed = self.velocity.length();
+            let drop = FRICTION * ctx.dt;
+            self.velocity = if drop >= speed {
+                Vec2D::ZERO
+            } else {
+                self.velocity * ((speed - drop) / speed)
+            };
         }
 
         if ctx.is_key_pressed(Key::Space) {
@@ -82,13 +112,6 @@ impl Player {
             }
         }
 
-        if dir != Vec2D::ZERO {
-            dir = dir.normalize();
-        }
-        if self.velocity != Vec2D::ZERO {
-            self.velocity = self.velocity.normalize();
-        }
-
         if let Some(new_pos) = self.detect_portal_collision() {
             if self.can_teleportate {
                 self.can_teleportate = false;
@@ -98,18 +121,39 @@ impl Player {
             self.can_teleportate = true;
         }
 
-        // Drive the ducky animation from the movement input: walk while moving,
-        // idle otherwise, and face the last horizontal direction travelled.
+        // Drive the ducky animation from the actual motion: walk while the player
+        // is moving (so it keeps walking while decelerating), idle once stopped,
+        // and face the last horizontal direction travelled.
+        let moving = self.velocity.length_squared() > MOVING_EPS * MOVING_EPS;
         self.anim
-            .set_state(if dir == Vec2D::ZERO { ANIM_IDLE } else { ANIM_WALK });
-        if dir.x < 0.0 {
+            .set_state(if moving { ANIM_WALK } else { ANIM_IDLE });
+        if self.velocity.x < -MOVING_EPS {
             self.facing_left = true;
-        } else if dir.x > 0.0 {
+        } else if self.velocity.x > MOVING_EPS {
             self.facing_left = false;
         }
         self.anim.update(ctx.dt);
 
         dir
+    }
+
+    /// The player's collision hit-box (top-left `pos`, size `shape`) in world space.
+    pub fn collider(&self) -> Rect {
+        Rect::new(self.pos.x, self.pos.y, self.shape.x, self.shape.y)
+    }
+
+    /// World-space point where the chain attaches to the player.
+    pub fn chain_point(&self) -> Vec2D {
+        self.pos + self.chain_offset
+    }
+
+    /// Draw the player's collision hit-box and chain-attachment point. Called by
+    /// the gameplay screen's F3 debug overlay so the collider and tether point
+    /// line up with the level's collision layer.
+    pub fn draw_collider(&self, canvas: &mut Canvas) {
+        let r = self.collider();
+        canvas.rectangle(r.x, r.y, r.width, r.height, GREEN.with_alpha(0.4));
+        canvas.circle(self.chain_point(), 6.0, GOLD);
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {

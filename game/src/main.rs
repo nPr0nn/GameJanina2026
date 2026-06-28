@@ -13,7 +13,6 @@ mod chain;
 mod squeezable;
 mod gameplay;
 mod transition;
-mod movable;
 mod menu;
 mod loc;
 
@@ -82,10 +81,10 @@ impl Ui {
         ];
         let credits_texts = [
             "",
+            "Ana Clara Zoppi",
             "Lucas Miranda",
             "Lucas Nogueira",
             "Nícolas Hecker",
-            "Ana Clara Zoppi",
         ];
         let config_texts = [loc.fullscreen_key(), loc.zoom_key(), loc.config_placeholder()];
 
@@ -157,7 +156,7 @@ impl Game for App {
     fn init(ctx: &mut Context) -> Self {
         let loc = Loc::new(Lang::English);
         Self {
-            screen: Screen::Menu,
+            screen: Screen::Gameplay,
             transition: Transition::new(),
             gameplay: Gameplay::new(ctx, loc),
             menu: Menu::new(ctx, loc),
@@ -335,6 +334,7 @@ fn main() {
         render_height: RENDER_H as u32,
         title: "Duck in Boots".to_string(),
         target_ups: 60,
+        fullscreen: true,
         centered: true,
         resizable: false,
         // 4x MSAA looks crisp on native but is expensive on the web (WebGL2
