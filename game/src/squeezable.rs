@@ -30,6 +30,10 @@ struct Squeezable {
     pos: Vec2D,
     radius: f32,
     alive: bool,
+    /// Group this object belongs to, if any.  Objects sharing a group id are
+    /// only crushed when *all* of the group's living members are cinched in the
+    /// same frame.  Ungrouped objects (`None`) crush individually.
+    group: Option<u32>,
 }
 
 /// Manager owning the squeezable objects and the squeeze-event listeners.
@@ -37,6 +41,7 @@ pub struct Squeezables {
     items: Vec<Squeezable>,
     listeners: Vec<Listener>,
     next_id: u32,
+    next_group_id: u32,
 }
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
@@ -64,11 +69,30 @@ impl Squeezables {
             items: Vec::new(),
             listeners: Vec::new(),
             next_id: 0,
+            next_group_id: 0,
         }
     }
 
-    /// Add a round object at `pos` and return its id.
+    /// Add a standalone round object at `pos` and return its id.  It is crushed
+    /// the moment a chain cinches tight around it.
     pub fn spawn(&mut self, pos: Vec2D, radius: f32) -> u32 {
+        self.spawn_in_group(pos, radius, None)
+    }
+
+    /// Add a group of round objects that share a fate: none of them is crushed
+    /// until a chain is simultaneously cinched around *every* member.  Each
+    /// entry is a `(position, radius)` pair.  Returns the new group's id.
+    pub fn spawn_group(&mut self, objects: &[(Vec2D, f32)]) -> u32 {
+        let group = self.next_group_id;
+        self.next_group_id += 1;
+        for &(pos, radius) in objects {
+            self.spawn_in_group(pos, radius, Some(group));
+        }
+        group
+    }
+
+    /// Shared spawn path: push one object with an optional group, return its id.
+    fn spawn_in_group(&mut self, pos: Vec2D, radius: f32, group: Option<u32>) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         self.items.push(Squeezable {
@@ -76,6 +100,7 @@ impl Squeezables {
             pos,
             radius,
             alive: true,
+            group,
         });
         id
     }
@@ -117,21 +142,45 @@ impl Squeezables {
     ///
     /// Call once per frame, after the chains have been simulated.
     pub fn update(&mut self, chains: &[Chain]) {
-        // Decide first (immutable borrow of chains), mutate items, then notify —
-        // this keeps the borrow checker happy without juggling indices.
+        // 1. Snapshot which living object each chain is cinching this frame.
+        let cinched: Vec<bool> = self
+            .items
+            .iter()
+            .map(|s| s.alive && chains.iter().any(|c| chain_cinches(c, s.pos, s.radius)))
+            .collect();
+
+        // 2. Decide who is crushed. An ungrouped object crushes on its own; a
+        //    grouped object only crushes when every still-living member of its
+        //    group is cinched in this same frame. Collect indices first so the
+        //    group lookups can borrow `self.items` immutably.
+        let to_crush: Vec<usize> = (0..self.items.len())
+            .filter(|&i| {
+                let s = &self.items[i];
+                if !s.alive {
+                    return false;
+                }
+                match s.group {
+                    None => cinched[i],
+                    Some(g) => self
+                        .items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, o)| o.alive && o.group == Some(g))
+                        .all(|(j, _)| cinched[j]),
+                }
+            })
+            .collect();
+
+        // 3. Mutate, then notify.
         let mut crushed: Vec<SqueezeEvent> = Vec::new();
-        for s in &mut self.items {
-            if !s.alive {
-                continue;
-            }
-            if chains.iter().any(|c| chain_cinches(c, s.pos, s.radius)) {
-                s.alive = false;
-                crushed.push(SqueezeEvent {
-                    id: s.id,
-                    pos: s.pos,
-                    radius: s.radius,
-                });
-            }
+        for i in to_crush {
+            let s = &mut self.items[i];
+            s.alive = false;
+            crushed.push(SqueezeEvent {
+                id: s.id,
+                pos: s.pos,
+                radius: s.radius,
+            });
         }
         for ev in &crushed {
             for listener in &mut self.listeners {
