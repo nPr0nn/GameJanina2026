@@ -4,7 +4,37 @@
     {
       "Rect": {
         "id": "bej1dt",
-        "x": 1056.0,
+        "x": 1088.0,
+        "y": 32.0,
+        "width": 32.0,
+        "height": 32.0,
+        "color": {
+          "r": 135,
+          "g": 60,
+          "b": 190,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "eilj7p",
+        "x": 768.0,
+        "y": -192.0,
+        "width": 640.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "pej0su",
+        "x": 832.0,
         "y": -64.0,
         "width": 32.0,
         "height": 32.0,
@@ -18,146 +48,11 @@
     },
     {
       "Rect": {
-        "id": "b92j5v",
-        "x": 768.0,
-        "y": -128.0,
-        "width": 64.0,
-        "height": 352.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "xe60oc",
-        "x": 1344.0,
-        "y": -128.0,
-        "width": 64.0,
-        "height": 352.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "eilj7p",
-        "x": 768.0,
-        "y": -192.0,
-        "width": 640.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "yr1wmy",
-        "x": 768.0,
-        "y": 224.0,
-        "width": 320.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "zea37c",
-        "x": 1152.0,
-        "y": 224.0,
-        "width": 256.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "pej0su",
-        "x": 832.0,
-        "y": -128.0,
-        "width": 32.0,
-        "height": 32.0,
-        "color": {
-          "r": 135,
-          "g": 60,
-          "b": 190,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "dbxl5f",
-        "x": 576.0,
-        "y": -352.0,
-        "width": 64.0,
-        "height": 992.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "fupnh0",
-        "x": 640.0,
-        "y": 576.0,
-        "width": 896.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "2ohtkl",
         "x": 640.0,
-        "y": -352.0,
+        "y": -416.0,
         "width": 1024.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "9sf0fq",
-        "x": 1536.0,
-        "y": -192.0,
-        "width": 64.0,
-        "height": 832.0,
+        "height": 128.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -363,24 +258,9 @@
     },
     {
       "Rect": {
-        "id": "ndpdb8",
-        "x": 1664.0,
-        "y": -352.0,
-        "width": 64.0,
-        "height": 128.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "fdz0p7",
         "x": 352.0,
-        "y": 672.0,
+        "y": 736.0,
         "width": 64.0,
         "height": 320.0,
         "color": {
@@ -395,7 +275,7 @@
       "Rect": {
         "id": "m2gljy",
         "x": 416.0,
-        "y": 672.0,
+        "y": 800.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -410,7 +290,7 @@
       "Rect": {
         "id": "pyji2q",
         "x": 416.0,
-        "y": 736.0,
+        "y": 864.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -424,8 +304,8 @@
     {
       "Rect": {
         "id": "r6o8p2",
-        "x": 416.0,
-        "y": 800.0,
+        "x": 576.0,
+        "y": 896.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -440,7 +320,7 @@
       "Rect": {
         "id": "p6bf54",
         "x": 416.0,
-        "y": 960.0,
+        "y": 1024.0,
         "width": 32.0,
         "height": 32.0,
         "color": {
@@ -455,7 +335,7 @@
       "Rect": {
         "id": "3inrl4",
         "x": 448.0,
-        "y": 864.0,
+        "y": 992.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -484,8 +364,8 @@
     {
       "Rect": {
         "id": "m04shr",
-        "x": 512.0,
-        "y": 800.0,
+        "x": 416.0,
+        "y": 736.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -499,7 +379,7 @@
     {
       "Rect": {
         "id": "ozb0n1",
-        "x": 576.0,
+        "x": 512.0,
         "y": 832.0,
         "width": 64.0,
         "height": 64.0,
@@ -514,7 +394,7 @@
     {
       "Rect": {
         "id": "6e8383",
-        "x": 576.0,
+        "x": 608.0,
         "y": 736.0,
         "width": 64.0,
         "height": 64.0,
@@ -530,7 +410,7 @@
       "Rect": {
         "id": "mr2uaq",
         "x": 512.0,
-        "y": 704.0,
+        "y": 736.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -543,56 +423,11 @@
     },
     {
       "Rect": {
-        "id": "nshbtz",
-        "x": 1792.0,
-        "y": -352.0,
-        "width": 64.0,
-        "height": 1408.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "zwoigc",
-        "x": 288.0,
-        "y": 992.0,
-        "width": 1504.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "nnqndw",
-        "x": 288.0,
-        "y": -352.0,
-        "width": 64.0,
-        "height": 1344.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "az4roy",
         "x": 352.0,
-        "y": -352.0,
+        "y": -416.0,
         "width": 224.0,
-        "height": 64.0,
+        "height": 128.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -770,9 +605,9 @@
       "Rect": {
         "id": "xf53q2",
         "x": 1728.0,
-        "y": -736.0,
+        "y": -800.0,
         "width": 64.0,
-        "height": 512.0,
+        "height": 544.0,
         "color": {
           "r": 102,
           "g": 191,
@@ -785,7 +620,7 @@
       "Rect": {
         "id": "zek30l",
         "x": 1472.0,
-        "y": -736.0,
+        "y": -800.0,
         "width": 256.0,
         "height": 384.0,
         "color": {
@@ -800,7 +635,7 @@
       "Rect": {
         "id": "jibzra",
         "x": 1792.0,
-        "y": -736.0,
+        "y": -800.0,
         "width": 256.0,
         "height": 384.0,
         "color": {
@@ -813,39 +648,9 @@
     },
     {
       "Rect": {
-        "id": "iju61u",
-        "x": 1856.0,
-        "y": -352.0,
-        "width": 256.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "g3e67b",
-        "x": 1472.0,
-        "y": -800.0,
-        "width": 256.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "xs6r1e",
         "x": 1792.0,
-        "y": -800.0,
+        "y": -864.0,
         "width": 320.0,
         "height": 64.0,
         "color": {
@@ -875,54 +680,9 @@
       "Rect": {
         "id": "a5wd2t",
         "x": 2048.0,
-        "y": -736.0,
+        "y": -800.0,
         "width": 64.0,
-        "height": 128.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "hvjs6s",
-        "x": 2112.0,
-        "y": -672.0,
-        "width": 128.0,
-        "height": 64.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "uy9zac",
-        "x": 2176.0,
-        "y": -608.0,
-        "width": 64.0,
-        "height": 128.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "ura8am",
-        "x": 2112.0,
-        "y": -544.0,
-        "width": 64.0,
-        "height": 64.0,
+        "height": 192.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -937,7 +697,7 @@
         "x": 1408.0,
         "y": -800.0,
         "width": 64.0,
-        "height": 320.0,
+        "height": 160.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -950,7 +710,7 @@
       "Rect": {
         "id": "xnr6kr",
         "x": 1408.0,
-        "y": -416.0,
+        "y": -576.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -965,9 +725,9 @@
       "Rect": {
         "id": "03co5u",
         "x": 1280.0,
-        "y": -544.0,
+        "y": -768.0,
         "width": 128.0,
-        "height": 64.0,
+        "height": 128.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -980,7 +740,7 @@
       "Rect": {
         "id": "0xja8k",
         "x": 1280.0,
-        "y": -480.0,
+        "y": -640.0,
         "width": 64.0,
         "height": 128.0,
         "color": {
@@ -995,7 +755,7 @@
       "Rect": {
         "id": "x26qfx",
         "x": 1376.0,
-        "y": -384.0,
+        "y": -512.0,
         "width": 32.0,
         "height": 32.0,
         "color": {
@@ -1353,21 +1113,6 @@
     },
     {
       "Rect": {
-        "id": "lnx8am",
-        "x": 928.0,
-        "y": -1664.0,
-        "width": 64.0,
-        "height": 480.0,
-        "color": {
-          "r": 230,
-          "g": 41,
-          "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
         "id": "43s5hs",
         "x": 2208.0,
         "y": -1600.0,
@@ -1385,9 +1130,9 @@
       "Rect": {
         "id": "zp4n4x",
         "x": 1056.0,
-        "y": -1664.0,
+        "y": -1728.0,
         "width": 1216.0,
-        "height": 64.0,
+        "height": 128.0,
         "color": {
           "r": 230,
           "g": 41,
@@ -1417,26 +1162,11 @@
         "x": 1792.0,
         "y": -1088.0,
         "width": 64.0,
-        "height": 288.0,
+        "height": 224.0,
         "color": {
           "r": 230,
           "g": 41,
           "b": 55,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "uothtl",
-        "x": 1504.0,
-        "y": -896.0,
-        "width": 64.0,
-        "height": 64.0,
-        "color": {
-          "r": 0,
-          "g": 158,
-          "b": 47,
           "a": 255
         }
       }
@@ -1491,21 +1221,6 @@
         "id": "cwv2mq",
         "x": 1600.0,
         "y": -1088.0,
-        "width": 64.0,
-        "height": 64.0,
-        "color": {
-          "r": 255,
-          "g": 203,
-          "b": 0,
-          "a": 255
-        }
-      }
-    },
-    {
-      "Rect": {
-        "id": "am9y3t",
-        "x": 1600.0,
-        "y": -928.0,
         "width": 64.0,
         "height": 64.0,
         "color": {
@@ -1579,14 +1294,344 @@
     {
       "Rect": {
         "id": "vmqbvm",
-        "x": 1088.0,
-        "y": 208.0,
-        "width": 64.0,
-        "height": 80.0,
+        "x": 1090.0,
+        "y": 224.0,
+        "width": 60.0,
+        "height": 78.0,
         "color": {
           "r": 0,
           "g": 158,
           "b": 47,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "1yb76q",
+        "x": 2112.0,
+        "y": -544.0,
+        "width": 64.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "ney1pi",
+        "x": 2176.0,
+        "y": -608.0,
+        "width": 64.0,
+        "height": 192.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "gmz49m",
+        "x": 1280.0,
+        "y": -512.0,
+        "width": 64.0,
+        "height": 96.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "2f9wpa",
+        "x": 1408.0,
+        "y": -512.0,
+        "width": 64.0,
+        "height": 96.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "49mcyt",
+        "x": 576.0,
+        "y": -416.0,
+        "width": 64.0,
+        "height": 1120.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "xzdm86",
+        "x": 640.0,
+        "y": 576.0,
+        "width": 960.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "nszavy",
+        "x": 1536.0,
+        "y": -192.0,
+        "width": 64.0,
+        "height": 768.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "ve7vph",
+        "x": 1664.0,
+        "y": -416.0,
+        "width": 64.0,
+        "height": 192.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "hearhe",
+        "x": 288.0,
+        "y": -416.0,
+        "width": 64.0,
+        "height": 1472.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "341bfj",
+        "x": 288.0,
+        "y": 1056.0,
+        "width": 1568.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "8kr7fz",
+        "x": 1792.0,
+        "y": -352.0,
+        "width": 64.0,
+        "height": 1408.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "2i4174",
+        "x": 1856.0,
+        "y": -352.0,
+        "width": 256.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "688c4d",
+        "x": 768.0,
+        "y": 224.0,
+        "width": 320.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "5q5obt",
+        "x": 1152.0,
+        "y": 224.0,
+        "width": 256.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "uyugz0",
+        "x": 1344.0,
+        "y": -64.0,
+        "width": 64.0,
+        "height": 288.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "f6w1le",
+        "x": 768.0,
+        "y": -64.0,
+        "width": 64.0,
+        "height": 288.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "p5zihe",
+        "x": 2112.0,
+        "y": -736.0,
+        "width": 128.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "2fffux",
+        "x": 928.0,
+        "y": -1728.0,
+        "width": 64.0,
+        "height": 544.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "09norn",
+        "x": 928.0,
+        "y": -1120.0,
+        "width": 480.0,
+        "height": 64.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "klbqr0",
+        "x": 1856.0,
+        "y": -1088.0,
+        "width": 416.0,
+        "height": 64.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "18wrwt",
+        "x": 1472.0,
+        "y": -928.0,
+        "width": 256.0,
+        "height": 128.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
+          "a": 255
+        }
+      }
+    },
+    {
+      "Rect": {
+        "id": "q1t7o6",
+        "x": 1856.0,
+        "y": -928.0,
+        "width": 256.0,
+        "height": 64.0,
+        "color": {
+          "r": 230,
+          "g": 41,
+          "b": 55,
           "a": 255
         }
       }
@@ -1599,13 +1644,6 @@
       "x": 1216.0,
       "y": 320.0,
       "scale": 1.0
-    },
-    {
-      "id": "vmqbvm",
-      "path": "sprites/TX Props_288_304_32_48.png",
-      "x": 1088.0,
-      "y": 192.0,
-      "scale": 2.0
     },
     {
       "id": "aphezp",
@@ -1692,94 +1730,10 @@
       "scale": 1.0
     },
     {
-      "id": "dnf9fh",
-      "path": "sprites/TX Tileset Grass_0_0_256_64.png",
-      "x": 832.0,
-      "y": 224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1qsrhi",
-      "path": "sprites/TX Tileset Grass_128_0_128_64.png",
-      "x": 1152.0,
-      "y": 224.0,
-      "scale": 1.0
-    },
-    {
       "id": "c6wkvs",
       "path": "sprites/TX Tileset Grass_128_48_64_64.png",
       "x": 1280.0,
       "y": 224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "i6kz13",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_1.png",
-      "x": 640.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "eryiny",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 896.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "u2tw52",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 1024.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1qb7hr",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 1152.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "smnsey",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 1280.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "2kxmrl",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 1408.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "gdk3oz",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_1.png",
-      "x": 1536.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "j2ean6",
-      "path": "sprites/TX Tileset Grass_128_0_64_128.png",
-      "x": 1664.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "r47ukb",
-      "path": "sprites/TX Tileset Grass_128_0_64_128.png",
-      "x": 576.0,
-      "y": -352.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ey6fok",
-      "path": "sprites/TX Tileset Grass_32_0_224_64.png",
-      "x": 352.0,
-      "y": -352.0,
       "scale": 1.0
     },
     {
@@ -2063,13 +2017,6 @@
       "scale": 1.0
     },
     {
-      "id": "5pawfx",
-      "path": "sprites/TX Tileset Grass_128_0_64_128_1.png",
-      "x": 2048.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
       "id": "ahs0qp",
       "path": "sprites/TX Tileset Grass_128_0_96_64_1.png",
       "x": 2048.0,
@@ -2081,13 +2028,6 @@
       "path": "sprites/TX Tileset Grass_128_0_96_64_1.png",
       "x": 2144.0,
       "y": -544.0,
-      "scale": 1.0
-    },
-    {
-      "id": "fpsfwm",
-      "path": "sprites/TX Tileset Grass_128_0_64_64.png",
-      "x": 2112.0,
-      "y": -672.0,
       "scale": 1.0
     },
     {
@@ -2108,34 +2048,6 @@
       "id": "iuhx4w",
       "path": "sprites/TX Tileset Grass_128_0_64_64.png",
       "x": 2048.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "j2f65d",
-      "path": "sprites/TX Tileset Grass_128_0_64_64.png",
-      "x": 1984.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "qermz1",
-      "path": "sprites/TX Tileset Grass_128_0_64_64.png",
-      "x": 1920.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "cp444t",
-      "path": "sprites/TX Tileset Grass_128_0_64_64.png",
-      "x": 1856.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "0jotqn",
-      "path": "sprites/TX Tileset Grass_128_0_64_64.png",
-      "x": 1792.0,
       "y": -800.0,
       "scale": 1.0
     },
@@ -2249,20 +2161,6 @@
       "path": "sprites/TX Tileset Grass_64_128_64_96_1.png",
       "x": 1536.0,
       "y": -192.0,
-      "scale": 1.0
-    },
-    {
-      "id": "zcslku",
-      "path": "sprites/TX Tileset Grass_64_128_64_96_1.png",
-      "x": 1408.0,
-      "y": -640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "d0kl0i",
-      "path": "sprites/TX Tileset Grass_64_128_64_96_1.png",
-      "x": 1408.0,
-      "y": -736.0,
       "scale": 1.0
     },
     {
@@ -2497,27 +2395,6 @@
       "scale": 1.0
     },
     {
-      "id": "x3tb77",
-      "path": "sprites/TX Tileset Grass_0_0_192_64.png",
-      "x": 1280.0,
-      "y": -544.0,
-      "scale": 1.0
-    },
-    {
-      "id": "omvnnc",
-      "path": "sprites/TX Tileset Grass_0_0_64_128_3.png",
-      "x": 1280.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "gcl8bl",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_5.png",
-      "x": 1472.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
       "id": "h37maf",
       "path": "sprites/TX Tileset Grass_128_0_64_128_2.png",
       "x": 1792.0,
@@ -2626,41 +2503,6 @@
       "id": "drhnjm",
       "path": "sprites/TX Tileset Grass_160_192_64_32.png",
       "x": 928.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "p7v4et",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_6.png",
-      "x": 1056.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "txscgp",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_6.png",
-      "x": 1312.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "yfsoul",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_6.png",
-      "x": 1568.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ecvki8",
-      "path": "sprites/TX Tileset Grass_0_0_256_64_6.png",
-      "x": 1824.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "nvh271",
-      "path": "sprites/TX Tileset Grass_128_0_128_64_2.png",
-      "x": 2080.0,
       "y": -1664.0,
       "scale": 1.0
     },
@@ -3155,27 +2997,6 @@
       "scale": 1.0
     },
     {
-      "id": "dwusqb",
-      "path": "sprites/TX Tileset Wall_288_32_16_96.png",
-      "x": 1472.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "le5mfx",
-      "path": "sprites/TX Tileset Wall_288_32_16_96.png",
-      "x": 1472.0,
-      "y": -640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "moynnp",
-      "path": "sprites/TX Tileset Wall_288_32_16_96.png",
-      "x": 832.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
       "id": "qia6it",
       "path": "sprites/TX Tileset Wall_288_32_16_96.png",
       "x": 832.0,
@@ -3208,27 +3029,6 @@
       "path": "sprites/TX Tileset Wall_288_32_16_32_1.png",
       "x": 1728.0,
       "y": -256.0,
-      "scale": 1.0
-    },
-    {
-      "id": "e1yop5",
-      "path": "sprites/TX Tileset Wall_288_32_32_64.png",
-      "x": 1472.0,
-      "y": -544.0,
-      "scale": 1.0
-    },
-    {
-      "id": "szwqx5",
-      "path": "sprites/TX Tileset Wall_288_32_32_64.png",
-      "x": 1728.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ykzzck",
-      "path": "sprites/TX Tileset Wall_320_32_32_64.png",
-      "x": 1024.0,
-      "y": -1664.0,
       "scale": 1.0
     },
     {
@@ -3327,41 +3127,6 @@
       "path": "sprites/TX Tileset Wall_320_32_32_96_2.png",
       "x": 1760.0,
       "y": -960.0,
-      "scale": 1.0
-    },
-    {
-      "id": "qfwcgf",
-      "path": "sprites/TX Tileset Wall_320_32_32_96_2.png",
-      "x": 1760.0,
-      "y": -864.0,
-      "scale": 1.0
-    },
-    {
-      "id": "c14nhr",
-      "path": "sprites/TX Tileset Wall_320_96_32_32.png",
-      "x": 1760.0,
-      "y": -768.0,
-      "scale": 1.0
-    },
-    {
-      "id": "lhjdfn",
-      "path": "sprites/TX Tileset Wall_320_32_32_96_3.png",
-      "x": 2016.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "szhy1h",
-      "path": "sprites/TX Tileset Wall_320_32_32_96_3.png",
-      "x": 1376.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "h371fn",
-      "path": "sprites/TX Tileset Wall_320_32_32_96_3.png",
-      "x": 1376.0,
-      "y": -832.0,
       "scale": 1.0
     },
     {
@@ -3582,13 +3347,6 @@
       "scale": 1.0
     },
     {
-      "id": "kq9nq7",
-      "path": "sprites/TX Tileset Wall_320_32_32_96_3.png",
-      "x": 1312.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
       "id": "7nzszj",
       "path": "sprites/TX Tileset Wall_320_32_32_96_3.png",
       "x": 1312.0,
@@ -3677,13 +3435,6 @@
       "path": "sprites/TX Tileset Wall_320_32_32_64_3.png",
       "x": 2144.0,
       "y": -608.0,
-      "scale": 1.0
-    },
-    {
-      "id": "nu6byk",
-      "path": "sprites/TX Tileset Wall_320_96_32_32_1.png",
-      "x": 2016.0,
-      "y": -640.0,
       "scale": 1.0
     },
     {
@@ -3827,318 +3578,10 @@
       "scale": 1.0
     },
     {
-      "id": "b2ljm7",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 480.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
       "id": "rg2lvb",
       "path": "sprites/TX Tileset Wall_384_8_96_32.png",
       "x": 576.0,
       "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "nyuuob",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 672.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1d5gfa",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 768.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "bfonpk",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 864.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "09cynv",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 960.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "i1g3q5",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 1056.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "hgfoxa",
-      "path": "sprites/TX Tileset Wall_384_8_96_32.png",
-      "x": 1152.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "at15gj",
-      "path": "sprites/TX Tileset Wall_320_32_32_64_5.png",
-      "x": 1248.0,
-      "y": -448.0,
-      "scale": 1.0
-    },
-    {
-      "id": "eog7bf",
-      "path": "sprites/TX Tileset Wall_232_104_32_32.png",
-      "x": 1248.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "s8oa9t",
-      "path": "sprites/TX Tileset Wall_152_104_40_32.png",
-      "x": 1344.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "9g3fy3",
-      "path": "sprites/TX Tileset Wall_32_32_32_32.png",
-      "x": 1344.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "5pkk31",
-      "path": "sprites/TX Tileset Wall_88_96_40_8.png",
-      "x": 1440.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "tedfeh",
-      "path": "sprites/TX Tileset Wall_400_32_64_8.png",
-      "x": 1376.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "nci0ni",
-      "path": "sprites/TX Tileset Wall_344_32_8_64.png",
-      "x": 1344.0,
-      "y": -448.0,
-      "scale": 1.0
-    },
-    {
-      "id": "wzje0b",
-      "path": "sprites/TX Tileset Wall_384_8_64_32.png",
-      "x": 1408.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "30ppp0",
-      "path": "sprites/TX Tileset Wall_384_8_64_32.png",
-      "x": 1472.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1l3tkz",
-      "path": "sprites/TX Tileset Wall_384_8_64_32.png",
-      "x": 1536.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ss5gy9",
-      "path": "sprites/TX Tileset Wall_384_8_64_32.png",
-      "x": 1600.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "237aro",
-      "path": "sprites/TX Tileset Wall_384_8_64_32.png",
-      "x": 1664.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "muf4fw",
-      "path": "sprites/TX Tileset Wall_256_8_32_32.png",
-      "x": 1728.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "lbjrqe",
-      "path": "sprites/TX Tileset Wall_376_8_32_32.png",
-      "x": 1376.0,
-      "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "tq7hu3",
-      "path": "sprites/TX Tileset Wall_8_8_32_32.png",
-      "x": 1248.0,
-      "y": -576.0,
-      "scale": 1.0
-    },
-    {
-      "id": "yf6lad",
-      "path": "sprites/TX Tileset Wall_384_8_96_32_2.png",
-      "x": 1280.0,
-      "y": -576.0,
-      "scale": 1.0
-    },
-    {
-      "id": "hrr6co",
-      "path": "sprites/TX Tileset Wall_320_32_32_64_6.png",
-      "x": 1376.0,
-      "y": -640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "t1ckpp",
-      "path": "sprites/TX Tileset Wall_232_104_32_32_2.png",
-      "x": 1376.0,
-      "y": -576.0,
-      "scale": 1.0
-    },
-    {
-      "id": "hfrl5a",
-      "path": "sprites/TX Tileset Wall_376_32_96_16.png",
-      "x": 640.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "3jbs8k",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 736.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "q52wdc",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 832.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "v0y55s",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 928.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "37gfbl",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1024.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "2begms",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1120.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ddy1be",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1216.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "sgl3v5",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1312.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "wpmz87",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1408.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "8udjiy",
-      "path": "sprites/TX Tileset Wall_384_32_96_16.png",
-      "x": 1504.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ts36og",
-      "path": "sprites/TX Tileset Wall_384_32_56_8.png",
-      "x": 1600.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "hdb03m",
-      "path": "sprites/TX Tileset Wall_384_32_56_8.png",
-      "x": 2112.0,
-      "y": -608.0,
-      "scale": 1.0
-    },
-    {
-      "id": "sb4oz4",
-      "path": "sprites/TX Tileset Wall_128_128_32_32.png",
-      "x": 2016.0,
-      "y": -608.0,
-      "scale": 1.0
-    },
-    {
-      "id": "0h2pfp",
-      "path": "sprites/TX Tileset Wall_160_128_64_24.png",
-      "x": 2048.0,
-      "y": -608.0,
-      "scale": 1.0
-    },
-    {
-      "id": "rbswb3",
-      "path": "sprites/TX Tileset Wall_160_128_64_24.png",
-      "x": 2176.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1ekqbs",
-      "path": "sprites/TX Tileset Wall_160_128_64_24.png",
-      "x": 2048.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "1w6eqa",
-      "path": "sprites/TX Tileset Wall_160_128_64_24.png",
-      "x": 1984.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ez0o1d",
-      "path": "sprites/TX Tileset Wall_160_128_64_24.png",
-      "x": 1920.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "96334c",
-      "path": "sprites/TX Tileset Wall_32_32_64_56.png",
-      "x": 2112.0,
-      "y": -480.0,
       "scale": 1.0
     },
     {
@@ -4149,24 +3592,10 @@
       "scale": 1.0
     },
     {
-      "id": "y94wk5",
-      "path": "sprites/TX Tileset Wall_32_32_72_64.png",
-      "x": 1856.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
       "id": "jkexpe",
       "path": "sprites/TX Tileset Wall_288_64_32_32.png",
       "x": 1856.0,
       "y": -224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "vw3w8q",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_1.png",
-      "x": 288.0,
-      "y": 1056.0,
       "scale": 1.0
     },
     {
@@ -4264,13 +3693,6 @@
       "id": "1jsfi4",
       "path": "sprites/TX Tileset Wall_384_32_96_32_1.png",
       "x": 1632.0,
-      "y": 1056.0,
-      "scale": 1.0
-    },
-    {
-      "id": "i7etky",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_1.png",
-      "x": 1760.0,
       "y": 1056.0,
       "scale": 1.0
     },
@@ -4387,34 +3809,6 @@
       "scale": 1.0
     },
     {
-      "id": "nh88th",
-      "path": "sprites/TX Tileset Wall_128_128_32_32_1.png",
-      "x": 256.0,
-      "y": 1056.0,
-      "scale": 1.0
-    },
-    {
-      "id": "4c9xdj",
-      "path": "sprites/TX Tileset Wall_384_32_96_24.png",
-      "x": 352.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "kepo1r",
-      "path": "sprites/TX Tileset Wall_384_32_96_24.png",
-      "x": 448.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "7rkw6m",
-      "path": "sprites/TX Tileset Wall_384_32_32_32.png",
-      "x": 544.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
       "id": "lnwxk7",
       "path": "sprites/TX Tileset Wall_384_8_96_32_4.png",
       "x": 832.0,
@@ -4429,23 +3823,9 @@
       "scale": 1.0
     },
     {
-      "id": "23uxy7",
-      "path": "sprites/TX Tileset Wall_384_8_96_32_4.png",
-      "x": 1152.0,
-      "y": 192.0,
-      "scale": 1.0
-    },
-    {
       "id": "8x5xp3",
       "path": "sprites/TX Tileset Wall_384_8_96_32_4.png",
       "x": 1248.0,
-      "y": 192.0,
-      "scale": 1.0
-    },
-    {
-      "id": "hjuwkw",
-      "path": "sprites/TX Tileset Wall_384_8_64_32_1.png",
-      "x": 1024.0,
       "y": 192.0,
       "scale": 1.0
     },
@@ -4527,276 +3907,10 @@
       "scale": 1.0
     },
     {
-      "id": "h8fqgu",
-      "path": "sprites/TX Tileset Wall_128_128_32_32_2.png",
-      "x": 544.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
       "id": "ycc945",
       "path": "sprites/TX Tileset Wall_128_128_32_32_2.png",
       "x": 1632.0,
       "y": -224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "xldji8",
-      "path": "sprites/TX Tileset Wall_128_128_32_32_2.png",
-      "x": 1760.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "p6lvu7",
-      "path": "sprites/TX Tileset Wall_128_128_32_32_2.png",
-      "x": 1024.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "tfbapx",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 832.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ib7wlz",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 928.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
-      "id": "l2l1k4",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1024.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
-      "id": "tgchbs",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1120.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
-      "id": "8bd90s",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1216.0,
-      "y": -128.0,
-      "scale": 1.0
-    },
-    {
-      "id": "9rubxy",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 576.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "e4rxvd",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 672.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ngc1ru",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 768.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "qi2y1f",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 864.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ussi28",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 960.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "tez9qe",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1056.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "610f4x",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1152.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "6sslf1",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1248.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "qdbk76",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1344.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "nauvnm",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_3.png",
-      "x": 1440.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "x17zq6",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_1.png",
-      "x": 1536.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "08wktq",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 1856.0,
-      "y": 1056.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ohq98h",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 1600.0,
-      "y": 640.0,
-      "scale": 1.0
-    },
-    {
-      "id": "rdvlt8",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 1728.0,
-      "y": -224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ajib1f",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 1728.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "uh4jyc",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 2240.0,
-      "y": -480.0,
-      "scale": 1.0
-    },
-    {
-      "id": "9x71fr",
-      "path": "sprites/TX Tileset Wall_256_128_16_16_1.png",
-      "x": 2112.0,
-      "y": -288.0,
-      "scale": 1.0
-    },
-    {
-      "id": "vc01cq",
-      "path": "sprites/TX Tileset Wall_376_32_96_24.png",
-      "x": 1472.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "xwndpp",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_4.png",
-      "x": 1568.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "w4do7i",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1664.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "z63q9e",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1792.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "gns1ae",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1856.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "2bqxas",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1920.0,
-      "y": -736.0,
-      "scale": 1.0
-    },
-    {
-      "id": "3fdpdk",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1664.0,
-      "y": -224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "j2ck6y",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 2208.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "igg86k",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 2144.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "lbb75l",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 2080.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "2s0lqv",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 2016.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "3dkwks",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1952.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "0a75ap",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_2.png",
-      "x": 1888.0,
-      "y": -1088.0,
       "scale": 1.0
     },
     {
@@ -4839,90 +3953,6 @@
       "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
       "x": 1312.0,
       "y": -1120.0,
-      "scale": 1.0
-    },
-    {
-      "id": "slczfj",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1056.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "x8fn6k",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1152.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ej3pmb",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1248.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "g15c79",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1344.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "5xuljo",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1440.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "etjrwl",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1536.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "lt8jvq",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1632.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "12g5dv",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1728.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "4vmlqy",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1824.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "uomjq6",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 1920.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "pyjxdf",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 2016.0,
-      "y": -1600.0,
-      "scale": 1.0
-    },
-    {
-      "id": "gmtqkh",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_5.png",
-      "x": 2112.0,
-      "y": -1600.0,
       "scale": 1.0
     },
     {
@@ -4972,13 +4002,6 @@
       "path": "sprites/TX Tileset Wall_8_8_32_32_2.png",
       "x": 1760.0,
       "y": -384.0,
-      "scale": 1.0
-    },
-    {
-      "id": "siheih",
-      "path": "sprites/TX Tileset Wall_8_8_32_32_2.png",
-      "x": 2016.0,
-      "y": -576.0,
       "scale": 1.0
     },
     {
@@ -5056,27 +4079,6 @@
       "path": "sprites/TX Tileset Wall_384_8_32_32_1.png",
       "x": 2176.0,
       "y": -1184.0,
-      "scale": 1.0
-    },
-    {
-      "id": "p4k45j",
-      "path": "sprites/TX Tileset Wall_256_128_32_24.png",
-      "x": 2272.0,
-      "y": -1088.0,
-      "scale": 1.0
-    },
-    {
-      "id": "yq728h",
-      "path": "sprites/TX Tileset Wall_320_64_32_64_1.png",
-      "x": 1120.0,
-      "y": 224.0,
-      "scale": 1.0
-    },
-    {
-      "id": "rhb39m",
-      "path": "sprites/TX Tileset Wall_288_64_32_64_1.png",
-      "x": 1088.0,
-      "y": 224.0,
       "scale": 1.0
     },
     {
@@ -5199,31 +4201,10 @@
       "scale": 1.0
     },
     {
-      "id": "7tl4zr",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_9.png",
-      "x": 2112.0,
-      "y": -672.0,
-      "scale": 1.0
-    },
-    {
       "id": "ftfw04",
       "path": "sprites/TX Tileset Wall_448_32_32_32_3.png",
       "x": 2208.0,
       "y": -672.0,
-      "scale": 1.0
-    },
-    {
-      "id": "naxyy7",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_10.png",
-      "x": 1856.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "634cpc",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_10.png",
-      "x": 1952.0,
-      "y": -800.0,
       "scale": 1.0
     },
     {
@@ -5234,156 +4215,9 @@
       "scale": 1.0
     },
     {
-      "id": "vi1fqg",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_11.png",
-      "x": 1472.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "l1h7jn",
-      "path": "sprites/TX Tileset Wall_384_32_96_32_11.png",
-      "x": 1568.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
-      "id": "08mtdd",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1664.0,
-      "y": -800.0,
-      "scale": 1.0
-    },
-    {
       "id": "w15wpm",
       "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
       "x": 928.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "iwwjdj",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1056.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "mzn8c6",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1120.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "joas58",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1184.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "2nen0q",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1248.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "ltc4ba",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1312.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "s5e05x",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1376.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "5de3qj",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1440.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "rsnj84",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1504.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "r3jnb9",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1568.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "r5lvpg",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1632.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "vbdens",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1696.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "4wansm",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1760.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "kukkkv",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1824.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "lq4l7o",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1888.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "vs81r8",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 1952.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "qgyimc",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 2016.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "3ativ7",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 2080.0,
-      "y": -1664.0,
-      "scale": 1.0
-    },
-    {
-      "id": "w1w607",
-      "path": "sprites/TX Tileset Wall_384_32_64_32_4.png",
-      "x": 2144.0,
       "y": -1664.0,
       "scale": 1.0
     },
@@ -5407,6 +4241,902 @@
       "x": 2272.0,
       "y": -1632.0,
       "scale": 1.0
+    },
+    {
+      "id": "1cfn1l",
+      "path": "sprites/TX Tileset Wall_32_96_24_64.png",
+      "x": 760.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "wmuni4",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 784.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "wmcp1f",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 912.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "n994v7",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 1200.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "tg1axn",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 864.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "39dtj0",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 992.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "pks8vq",
+      "path": "sprites/TX Tileset Wall_32_192_128_64_1.png",
+      "x": 1120.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "08rtp4",
+      "path": "sprites/TX Tileset Wall_64_192_64_64.png",
+      "x": 1248.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "f8aen0",
+      "path": "sprites/TX Tileset Wall_112_192_24_64.png",
+      "x": 1312.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "azqaj0",
+      "path": "sprites/TX Tileset Wall_112_192_24_64.png",
+      "x": 840.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "gc7boe",
+      "path": "sprites/TX Tileset Wall_256_32_8_88.png",
+      "x": 1336.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "lacemj",
+      "path": "sprites/TX Tileset Wall_288_96_8_8.png",
+      "x": 1336.0,
+      "y": -40.0,
+      "scale": 1.0
+    },
+    {
+      "id": "h68rrs",
+      "path": "sprites/TX Tileset Wall_152_32_8_72.png",
+      "x": 832.0,
+      "y": -128.0,
+      "scale": 1.0
+    },
+    {
+      "id": "w11t19",
+      "path": "sprites/TX Tileset Wall_152_96_8_24.png",
+      "x": 832.0,
+      "y": -56.0,
+      "scale": 1.0
+    },
+    {
+      "id": "3fkneh",
+      "path": "sprites/TX Tileset Wall_80_96_48_64.png",
+      "x": 1040.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "hlueot",
+      "path": "sprites/TX Tileset Wall_32_96_48_64.png",
+      "x": 1152.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "vcj5wc",
+      "path": "sprites/TX Tileset Wall_256_32_8_64.png",
+      "x": 1080.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "mz2owa",
+      "path": "sprites/TX Tileset Wall_288_112_8_8.png",
+      "x": 1080.0,
+      "y": 280.0,
+      "scale": 1.0
+    },
+    {
+      "id": "1yi610",
+      "path": "sprites/TX Tileset Wall_152_32_8_72_1.png",
+      "x": 1152.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "nk8rq4",
+      "path": "sprites/TX Tileset Wall_384_32_56_8_1.png",
+      "x": 1160.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "zarx2d",
+      "path": "sprites/TX Tileset Wall_384_32_56_8_1.png",
+      "x": 1024.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "8h58ff",
+      "path": "sprites/TX Tileset Wall_448_32_24_8.png",
+      "x": 1216.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "689y1g",
+      "path": "sprites/TX Tileset Wall_440_32_8_8.png",
+      "x": 1240.0,
+      "y": 216.0,
+      "scale": 1.0
+    },
+    {
+      "id": "h0won8",
+      "path": "sprites/TX Tileset Wall_64_192_72_64.png",
+      "x": 1328.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "u5bl9l",
+      "path": "sprites/TX Tileset Wall_112_96_16_64.png",
+      "x": 1400.0,
+      "y": 288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "egj2h0",
+      "path": "sprites/TX Tileset Wall_112_96_16_64.png",
+      "x": 1592.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "5e7qu4",
+      "path": "sprites/TX Tileset Wall_112_96_16_64.png",
+      "x": 2104.0,
+      "y": -288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ttqell",
+      "path": "sprites/TX Tileset Wall_112_96_16_64.png",
+      "x": 2232.0,
+      "y": -480.0,
+      "scale": 1.0
+    },
+    {
+      "id": "yvucg2",
+      "path": "sprites/TX Tileset Wall_32_96_64_64.png",
+      "x": 1056.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "1xx0id",
+      "path": "sprites/TX Tileset Wall_32_96_64_64.png",
+      "x": 280.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ca2p9l",
+      "path": "sprites/TX Tileset Wall_32_96_64_64.png",
+      "x": 568.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "33sdct",
+      "path": "sprites/TX Tileset Wall_96_96_32_64.png",
+      "x": 1832.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "h6hvdy",
+      "path": "sprites/TX Tileset Wall_96_96_32_64.png",
+      "x": 1448.0,
+      "y": -704.0,
+      "scale": 1.0
+    },
+    {
+      "id": "fmpdt7",
+      "path": "sprites/TX Tileset Wall_96_96_32_64.png",
+      "x": 1704.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "x4qqm0",
+      "path": "sprites/TX Tileset Wall_96_96_32_64.png",
+      "x": 2248.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "1sw75f",
+      "path": "sprites/TX Props_288_304_32_48_3.png",
+      "x": 1090.0,
+      "y": 212.0,
+      "scale": 1.9
+    },
+    {
+      "id": "dktliy",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 640.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "kduo2e",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 704.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ls58jj",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 768.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "i3f7o5",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 832.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "wmvynb",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 896.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "uq2k9l",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 960.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "3ld7sn",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1024.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "xfjr97",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1088.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "s3xr72",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1152.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "9w2qwr",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1216.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "lvdwfy",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1280.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "gi6jjj",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1344.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "lmpw4p",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1408.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "kfn7k2",
+      "path": "sprites/TX Tileset Wall_32_192_64_64.png",
+      "x": 1472.0,
+      "y": 640.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ccy7hd",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 352.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "8tt9cp",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 416.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "z7of3n",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 480.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "fhtycr",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 544.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "gjd6mc",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 608.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "dlff2i",
+      "path": "sprites/TX Tileset Wall_128_288_64_64.png",
+      "x": 672.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "nqcsnw",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 736.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "vtc70w",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 800.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "cbrp9c",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 864.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "k2b6r7",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 928.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "7dojor",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 992.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "owl3sg",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1056.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "np3kfg",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1120.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "wihobi",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1184.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "mn9mnu",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1248.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "uyy7g5",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1312.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "die5j2",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1376.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "brsxt3",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1440.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "iy7m8t",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1504.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "8oiji5",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1568.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "f44sqt",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1632.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "4smm28",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1696.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "khkzvb",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1760.0,
+      "y": 1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "p255ad",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1888.0,
+      "y": -288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "8njk21",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1952.0,
+      "y": -288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "m2vqxq",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2016.0,
+      "y": -288.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ilsadj",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2144.0,
+      "y": -480.0,
+      "scale": 1.0
+    },
+    {
+      "id": "mbavrk",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2080.0,
+      "y": -672.0,
+      "scale": 1.0
+    },
+    {
+      "id": "26orio",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1888.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "nb0wjt",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1952.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "h6gfm4",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2016.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "fe4w4b",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2080.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "55imfj",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2144.0,
+      "y": -1088.0,
+      "scale": 1.0
+    },
+    {
+      "id": "qh0d4f",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1376.0,
+      "y": -704.0,
+      "scale": 1.0
+    },
+    {
+      "id": "882xt7",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1632.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "6kgdd2",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1568.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "e6xzqs",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1504.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "rjt5v7",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1888.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "jxejnz",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1952.0,
+      "y": -864.0,
+      "scale": 1.0
+    },
+    {
+      "id": "xppmoj",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1568.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "5oyvmt",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1504.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "4cxpzz",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1440.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "5jgm1p",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1376.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "so8v9i",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1312.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "2vmfu6",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1248.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "g0wbjj",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1184.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "08b3s8",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1120.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "pj39e0",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1056.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "fe1tmh",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 992.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "l3oaee",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 928.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "9asx3f",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 864.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "pracny",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 800.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "hdm8xr",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 736.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "eg0s75",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 672.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "bbxwf6",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 384.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "g7zn9g",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 448.0,
+      "y": -352.0,
+      "scale": 1.0
+    },
+    {
+      "id": "b3phoc",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 960.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "p782z8",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1024.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "c8oxx6",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1088.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "2qrjbi",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1152.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "vb5yww",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1216.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "6wonb5",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1280.0,
+      "y": -1120.0,
+      "scale": 1.0
+    },
+    {
+      "id": "kzu42o",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1120.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "g3vm0r",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1184.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "wu2zin",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1248.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "iqqhpf",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1312.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "vzh08o",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1376.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "uyeui0",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1440.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "gbsirx",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1504.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "fb3p98",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1568.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "xv0u5g",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1632.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "euewly",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1696.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "642jlk",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1760.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "0xnpyy",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1824.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "lcfpt6",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1888.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "858ui6",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 1952.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "ih3c4x",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2016.0,
+      "y": -1664.0,
+      "scale": 1.0
+    },
+    {
+      "id": "0l6hc3",
+      "path": "sprites/TX Tileset Wall_32_288_64_64_1.png",
+      "x": 2080.0,
+      "y": -1664.0,
+      "scale": 1.0
     }
   ],
   "classifications": [
@@ -5427,5 +5157,5 @@
     "x": 992.0,
     "y": 128.0
   },
-  "grid_size": 16.0
+  "grid_size": 32.0
 }
