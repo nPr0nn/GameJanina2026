@@ -83,6 +83,12 @@ impl Gameplay {
 
         let mut squeezables = Squeezables::new();
         squeezables.spawn(Vec2D::new(1000.0, 550.0), 45.0);
+        // A grouped trio: none crush until all three are cinched at once.
+        squeezables.spawn_group(&[
+            (Vec2D::new(1300.0, 400.0), 45.0),
+            (Vec2D::new(1500.0, 550.0), 45.0),
+            (Vec2D::new(1300.0, 700.0), 45.0),
+        ]);
         let squeeze_count = Rc::new(Cell::new(0u32));
         let counter = squeeze_count.clone();
         squeezables.on_squeeze(move |_| {
@@ -262,8 +268,16 @@ impl Gameplay {
             canvas.circle(pos, radius - 6.0, PINK);
         }
 
-        for chain in &self.chains {
-            chain.draw(canvas);
+        // Draw the chains largest-first so the shortest ends up stacked on top.
+        // Opacity ramps from full on the topmost (shortest) chain down toward
+        // zero on the longest, so the deeper layers fade out.
+        let mut ordered: Vec<&Chain> = self.chains.iter().collect();
+        ordered.sort_by(|a, b| b.max_length().total_cmp(&a.max_length()));
+        let n = ordered.len();
+        for (i, chain) in ordered.iter().enumerate() {
+            // i == 0 is the longest (bottom); i == n - 1 is the shortest (top).
+            let alpha = ((i + 1) as f32 / n as f32).powi(4);
+            chain.draw(canvas, alpha);
         }
         canvas.circle(CHAIN_ANCHOR, 12.0, GOLD);
 
@@ -286,8 +300,8 @@ impl Gameplay {
 /// different length and tint, all starting at the player's spawn.
 fn new_chains(player_pos: Vec2D) -> Vec<Chain> {
     vec![
-        Chain::new(CHAIN_ANCHOR, player_pos, 1600.0, 6.0, RED),
-        Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 6.0, LIME),
+        Chain::new(CHAIN_ANCHOR, player_pos, 2400.0, 6.0, RED),
+        Chain::new(CHAIN_ANCHOR, player_pos, 2500.0, 6.0, LIME),
         Chain::new(CHAIN_ANCHOR, player_pos, 3200.0, 6.0, SKYBLUE),
     ]
 }

@@ -442,13 +442,17 @@ impl Chain {
 
     /// Draw the chain: thick lines between consecutive joints, and (when
     /// [`show_debug`](Self::show_debug) is enabled) a square at each joint.
-    pub fn draw(&self, canvas: &mut Canvas) {
+    ///
+    /// `alpha` scales the tint's opacity (`0.0`–`1.0`), used by the caller to
+    /// fade longer chains behind the shorter ones stacked on top.
+    pub fn draw(&self, canvas: &mut Canvas, alpha: f32) {
+        let color = self.color.with_alpha(alpha);
         for i in 0..self.joints.len() - 1 {
             canvas.line(
                 self.joints[i].pos,
                 self.joints[i + 1].pos,
                 self.link_size * 0.5,
-                self.color,
+                color,
             );
         }
 
@@ -460,7 +464,7 @@ impl Chain {
                     joint.pos.y - half,
                     self.link_size,
                     self.link_size,
-                    self.color,
+                    color,
                 );
             }
         }
