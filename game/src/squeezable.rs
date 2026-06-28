@@ -41,14 +41,14 @@ pub struct Squeezables {
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
 
-/// A squeeze needs nearly a full revolution of winding around the object.
-const FULL_LOOP_TURNS: f32 = 0.97;
+/// A squeeze needs at least one full revolution of winding around the object.
+const FULL_LOOP_TURNS: f32 = 1.0;
 /// How far past the surface a joint still counts as "hugging" the object.
-const CONTACT_BAND: f32 = 5.0;
-/// Minimum joints hugging the surface — proves the loop has cinched tight
-/// against the object ("a little bit of force") rather than merely winding
-/// around it from far away.
-const MIN_CONTACT_JOINTS: usize = 6;
+const CONTACT_BAND: f32 = 0.01;
+/// Minimum joints hugging the surface — proves the loop has been pulled tight
+/// against the object ("a little bit of force") rather than merely draped
+/// loosely around it.
+const MIN_CONTACT_JOINTS: usize = 10;
 
 impl Default for Squeezables {
     fn default() -> Self {

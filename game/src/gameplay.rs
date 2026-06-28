@@ -98,9 +98,9 @@ impl Gameplay {
         player.pos = Vec2D::new(640.0, 150.0);
         // Three chains sharing the same anchor but with different lengths and tints.
         let chains = vec![
-            Chain::new(chain_anchor, player.pos, 1200.0, 6.0, RED),
-            Chain::new(chain_anchor, player.pos, 1700.0, 6.0, LIME),
-            Chain::new(chain_anchor, player.pos, 2200.0, 6.0, SKYBLUE),
+            Chain::new(chain_anchor, player.pos, 1600.0, 6.0, RED),
+            Chain::new(chain_anchor, player.pos, 2400.0, 6.0, LIME),
+            Chain::new(chain_anchor, player.pos, 3200.0, 6.0, SKYBLUE),
         ];
         // Two solid blocks the player and chains can collide with.
         // Placed within reach of all three chains (max 2200 px from anchor).
@@ -110,7 +110,7 @@ impl Gameplay {
         ];
 
         let mut squeezables = Squeezables::new();
-        squeezables.spawn(Vec2D::new(640.0, 480.0), 45.0);
+        squeezables.spawn(Vec2D::new(1000.0, 550.0), 45.0);
         let squeeze_count = Rc::new(Cell::new(0u32));
         let counter = squeeze_count.clone();
         squeezables.on_squeeze(move |_| {
@@ -151,9 +151,9 @@ impl Gameplay {
         self.player = Player::new(self.cow.clone());
         self.player.pos = Vec2D::new(640.0, 150.0);
         self.chains = vec![
-            Chain::new(self.chain_anchor, self.player.pos, 1200.0, 6.0, RED),
-            Chain::new(self.chain_anchor, self.player.pos, 1700.0, 6.0, LIME),
-            Chain::new(self.chain_anchor, self.player.pos, 2200.0, 6.0, SKYBLUE),
+            Chain::new(self.chain_anchor, self.player.pos, 1600.0, 6.0, RED),
+            Chain::new(self.chain_anchor, self.player.pos, 2400.0, 6.0, LIME),
+            Chain::new(self.chain_anchor, self.player.pos, 3200.0, 6.0, SKYBLUE),
         ];
         self.test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         self.spin = 0.0;
