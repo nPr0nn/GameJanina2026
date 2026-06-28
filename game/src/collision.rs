@@ -12,6 +12,67 @@ use juni::prelude::*;
 
 // ── Swept AABB ─────────────────────────────────────────────────────────────
 
+/// Below this speed an axis counts as *parallel* to its slabs: the swept query
+/// can't divide by it, so it falls back to a containment test instead of the
+/// `1.0 / vel` reciprocal that would otherwise be `±∞`.
+const PARALLEL_EPS: f32 = 1e-8;
+
+/// Entry/exit times `(t0, t1)` for one axis of a swept ray against the slab
+/// `[lo, hi]` (with `lo < hi`). `origin` is the ray's start on that axis and
+/// `vel` its displacement over the frame.
+///
+/// The reciprocal `1.0 / vel` blows up to `±∞` as `vel → 0`, and `0.0 * ∞`
+/// is `NaN` — which is exactly what happens when a mover travels *parallel* to
+/// a slab while one of its edges sits *exactly* on the slab boundary (the
+/// aligned-box case). A stray `NaN` then slips through `min`/`max` and silently
+/// erases this axis's constraint, so a box that merely *touches* a neighbour
+/// gets treated as overlapping it and snags.
+///
+/// To stay robust we special-case the parallel axis explicitly:
+/// - `vel ≈ 0` and `origin` **strictly inside** `(lo, hi)`: the axis never
+///   constrains the sweep → `(-∞, +∞)`.
+/// - `vel ≈ 0` and `origin` on or outside the boundary: contact is impossible
+///   this frame → `None`, which short-circuits the whole sweep. Treating exact
+///   edge alignment as *outside* (the comparisons are strict) is what lets two
+///   flush-aligned boxes slide past each other instead of catching.
+fn slab(origin: f32, vel: f32, lo: f32, hi: f32) -> Option<(f32, f32)> {
+    if vel.abs() <= PARALLEL_EPS {
+        return if origin > lo && origin < hi {
+            Some((f32::NEG_INFINITY, f32::INFINITY))
+        } else {
+            None
+        };
+    }
+    let inv = 1.0 / vel;
+    let t_lo = (lo - origin) * inv;
+    let t_hi = (hi - origin) * inv;
+    // `inv` flips the ordering when `vel < 0`; sort so `t0` is always entry.
+    Some((t_lo.min(t_hi), t_lo.max(t_hi)))
+}
+
+/// Combine per-axis slab spans into a first-contact `(t, normal)`, or `None` if
+/// the spans never overlap within `[0, 1]`. Shared by the box- and point-sweep
+/// against an AABB — both reduce to intersecting two 1-D intervals.
+fn slab_hit(
+    (tx0, tx1): (f32, f32),
+    (ty0, ty1): (f32, f32),
+    vel: Vec2D,
+) -> Option<(f32, Vec2D)> {
+    let t_entry = tx0.max(ty0);
+    let t_exit = tx1.min(ty1);
+    if t_entry >= t_exit || t_entry >= 1.0 || t_exit <= 0.0 {
+        return None;
+    }
+    let t = t_entry.max(0.0);
+    // The axis that entered *last* is the one actually struck.
+    let normal = if tx0 > ty0 {
+        Vec2D::new(if vel.x < 0.0 { 1.0 } else { -1.0 }, 0.0)
+    } else {
+        Vec2D::new(0.0, if vel.y < 0.0 { 1.0 } else { -1.0 })
+    };
+    Some((t, normal))
+}
+
 /// Sweep a moving AABB (top-left `pos`, dimensions `size`, frame velocity `vel`)
 /// against a static AABB `rect`.  Returns the first-contact time `t ∈ [0,1]`
 /// and the outward surface normal, or `None` if there is no collision this frame.
@@ -26,34 +87,9 @@ pub fn sweep_rect(pos: Vec2D, size: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f3
     let ew = rect.width + size.x;
     let eh = rect.height + size.y;
 
-    let inv_vx = if vel.x.abs() > 1e-6 { 1.0 / vel.x } else { f32::INFINITY };
-    let inv_vy = if vel.y.abs() > 1e-6 { 1.0 / vel.y } else { f32::INFINITY };
-
-    let (tx0, tx1) = if vel.x >= 0.0 {
-        ((ex - pos.x) * inv_vx, (ex + ew - pos.x) * inv_vx)
-    } else {
-        ((ex + ew - pos.x) * inv_vx, (ex - pos.x) * inv_vx)
-    };
-    let (ty0, ty1) = if vel.y >= 0.0 {
-        ((ey - pos.y) * inv_vy, (ey + eh - pos.y) * inv_vy)
-    } else {
-        ((ey + eh - pos.y) * inv_vy, (ey - pos.y) * inv_vy)
-    };
-
-    let t_entry = tx0.max(ty0);
-    let t_exit  = tx1.min(ty1);
-
-    if t_entry >= t_exit || t_entry >= 1.0 || t_exit <= 0.0 {
-        return None;
-    }
-
-    let t = t_entry.max(0.0);
-    let normal = if tx0 > ty0 {
-        Vec2D::new(if vel.x < 0.0 { 1.0 } else { -1.0 }, 0.0)
-    } else {
-        Vec2D::new(0.0, if vel.y < 0.0 { 1.0 } else { -1.0 })
-    };
-    Some((t, normal))
+    let tx = slab(pos.x, vel.x, ex, ex + ew)?;
+    let ty = slab(pos.y, vel.y, ey, ey + eh)?;
+    slab_hit(tx, ty, vel)
 }
 
 // ── Continuous AABB resolution (the player's movement phase) ────────────────
@@ -230,34 +266,12 @@ impl Collider {
 /// Swept **point** vs static AABB.  Returns first-contact time `t ∈ [0,1]` and
 /// the outward face normal, or `None` if the segment `pos → pos+vel` misses.
 fn sweep_point_aabb(pos: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f32, Vec2D)> {
-    let r = rect.x + rect.width;
-    let b = rect.y + rect.height;
-    let inv_x = if vel.x.abs() > 1e-8 { 1.0 / vel.x } else { f32::INFINITY };
-    let inv_y = if vel.y.abs() > 1e-8 { 1.0 / vel.y } else { f32::INFINITY };
-
-    let (tx0, tx1) = if vel.x >= 0.0 {
-        ((rect.x - pos.x) * inv_x, (r - pos.x) * inv_x)
-    } else {
-        ((r - pos.x) * inv_x, (rect.x - pos.x) * inv_x)
-    };
-    let (ty0, ty1) = if vel.y >= 0.0 {
-        ((rect.y - pos.y) * inv_y, (b - pos.y) * inv_y)
-    } else {
-        ((b - pos.y) * inv_y, (rect.y - pos.y) * inv_y)
-    };
-
-    let t_entry = tx0.max(ty0);
-    let t_exit = tx1.min(ty1);
-    if t_entry >= t_exit || t_entry >= 1.0 || t_exit <= 0.0 {
-        return None;
-    }
-    let t = t_entry.max(0.0);
-    let normal = if tx0 > ty0 {
-        Vec2D::new(if vel.x < 0.0 { 1.0 } else { -1.0 }, 0.0)
-    } else {
-        Vec2D::new(0.0, if vel.y < 0.0 { 1.0 } else { -1.0 })
-    };
-    Some((t, normal))
+    // A point is the zero-size case of the box sweep, so it shares the same
+    // NaN-safe slab math (see [`slab`]) — vital when the point travels along a
+    // wall it's flush against.
+    let tx = slab(pos.x, vel.x, rect.x, rect.x + rect.width)?;
+    let ty = slab(pos.y, vel.y, rect.y, rect.y + rect.height)?;
+    slab_hit(tx, ty, vel)
 }
 
 /// Swept **point** vs static circle (ray–circle, entering from outside).
@@ -449,4 +463,47 @@ pub fn push_rect_out_of_aabb(pos: Vec2D, size: Vec2D, rect: Rect) -> Option<(Vec
     } else {
         (Vec2D::new(pos.x, ob + PUSH_EPS), Vec2D::new(0.0, 1.0))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A box sliding along +x, resting flush on top of a static box (its bottom
+    // edge exactly equal to the static's top edge), must NOT register a contact:
+    // the y-axis is parallel and edge-aligned, the classic `0 * ∞ = NaN` trap.
+    #[test]
+    fn flush_aligned_parallel_edge_does_not_snag() {
+        let size = Vec2D::new(32.0, 32.0);
+        // Static box top at y = 100; the mover rests exactly on it (bottom = 100).
+        let stat = Rect::new(200.0, 100.0, 32.0, 32.0);
+        let mover_pos = Vec2D::new(160.0, 100.0 - 32.0); // bottom edge == stat top
+        // Push straight right toward (but not into) the static box.
+        let hit = sweep_rect(mover_pos, size, Vec2D::new(8.0, 0.0), stat);
+        assert!(hit.is_none(), "edge-aligned slide reported a phantom hit: {hit:?}");
+    }
+
+    // The same head-on contact on the *moving* axis must still block: a box
+    // pushed +x whose right edge is flush with the static's left edge, fully
+    // overlapping in y, collides immediately (t == 0).
+    #[test]
+    fn flush_face_contact_on_moving_axis_blocks() {
+        let size = Vec2D::new(32.0, 32.0);
+        let stat = Rect::new(200.0, 100.0, 32.0, 32.0);
+        let mover_pos = Vec2D::new(200.0 - 32.0, 100.0); // right edge == stat left
+        let hit = sweep_rect(mover_pos, size, Vec2D::new(8.0, 0.0), stat);
+        let (t, n) = hit.expect("flush face contact should block");
+        assert!(t.abs() < 1e-6, "expected immediate contact, got t = {t}");
+        assert_eq!(n.x.signum(), -1.0, "normal should oppose +x motion");
+    }
+
+    // Sanity: no NaN escapes for a zero-velocity axis with an interior overlap.
+    #[test]
+    fn parallel_axis_inside_slab_is_unconstrained() {
+        let stat = Rect::new(0.0, 0.0, 10.0, 10.0);
+        // Point already inside the x-span, drifting down through the top edge.
+        let hit = sweep_point_aabb(Vec2D::new(5.0, -4.0), Vec2D::new(0.0, 8.0), stat);
+        let (t, _) = hit.expect("vertical entry should hit");
+        assert!(t.is_finite() && (0.0..=1.0).contains(&t));
+    }
 }

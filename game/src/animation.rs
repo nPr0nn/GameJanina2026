@@ -137,6 +137,11 @@ impl Animation {
         self.finished
     }
 
+    /// Size of one frame in source pixels (before any draw `scale`).
+    pub fn frame_size(&self) -> Vec2D {
+        Vec2D::new(self.sheet.frame_w, self.sheet.frame_h)
+    }
+
     /// Draw the current frame with its top-left at `pos`, scaled by `scale`.
     /// `flip_x` mirrors it horizontally (e.g. to face left), and `tint`
     /// multiplies the texels ([`WHITE`] for none). Draws nothing if the current

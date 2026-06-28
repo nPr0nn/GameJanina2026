@@ -11,7 +11,7 @@ use juni::prelude::*;
 use crate::classification::{build_label_text, resolve_label_overlaps, LabelSpec};
 use crate::constants::*;
 use crate::editor::Editor;
-use crate::geometry::{make_shape, update_shape_geometry};
+use crate::geometry::{make_shape, translate_shape, update_shape_geometry};
 use crate::id::random_id;
 use crate::level_io::build_tag_colors;
 use crate::sprite_sheet::{crop_and_save_sprite, snap_tile_selection};
@@ -72,12 +72,25 @@ fn col(c: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
-/// Snap a world point to the grid.
-fn snap(w: Vec2D) -> Vec2D {
-    Vec2D::new(
-        (w.x / GRID_SIZE).round() * GRID_SIZE,
-        (w.y / GRID_SIZE).round() * GRID_SIZE,
-    )
+/// Snap a world point to a grid of cell size `grid` (world pixels).
+fn snap(w: Vec2D, grid: f32) -> Vec2D {
+    let grid = grid.max(1.0);
+    Vec2D::new((w.x / grid).round() * grid, (w.y / grid).round() * grid)
+}
+
+/// A labelled `f32` drag box clamped to `min..`. Returns `true` if edited.
+fn num_field(ui: &mut egui::Ui, label: &str, v: &mut f32, min: f32) -> bool {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(
+            egui::DragValue::new(v)
+                .speed(1.0)
+                .range(min..=f32::MAX)
+                .suffix(" px"),
+        )
+        .changed()
+    })
+    .inner
 }
 
 /// Load a PNG into an egui `ColorImage` (nearest-neighbour pixel art).
@@ -559,6 +572,19 @@ impl EditorApp {
                 None => ui.label("spawn unset"),
             };
             ui.separator();
+            ui.label("Grid");
+            if ui
+                .add(
+                    egui::DragValue::new(&mut self.ed.level.grid_size)
+                        .range(1.0..=512.0)
+                        .speed(1.0)
+                        .suffix(" px"),
+                )
+                .changed()
+            {
+                self.ed.is_dirty = true;
+            }
+            ui.separator();
             ui.checkbox(&mut self.show_help, "Help");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.ed.is_dirty {
@@ -613,7 +639,55 @@ impl EditorApp {
             }
         });
         ui.add_space(6.0);
-        ui.label("Drag to draw · click a shape to select · right-click to delete");
+        ui.label(
+            "Drag empty space to draw · click a shape to select · drag it to move · \
+             Shift-drag to resize · right-click to delete",
+        );
+        self.ui_selected_shape(ui);
+    }
+
+    /// Numeric editor for the currently-selected shape on the active shape
+    /// layer: precise position/size fields plus a delete button. Edits are
+    /// snapped to nothing (exact), complementing the grid-snapped mouse tools.
+    fn ui_selected_shape(&mut self, ui: &mut egui::Ui) {
+        let Some(i) = self.ed.selected_shape else {
+            return;
+        };
+        // Selection can dangle after a delete/clear; drop it cleanly.
+        if self.ed.active_shapes().get(i).is_none() {
+            self.ed.selected_shape = None;
+            return;
+        }
+        ui.separator();
+        ui.label(format!("Selected shape #{i}"));
+
+        let mut changed = false;
+        if let Some(shape) = self.ed.active_shapes_mut().get_mut(i) {
+            match shape {
+                Shape::Rect {
+                    x, y, width, height, ..
+                } => {
+                    changed |= num_field(ui, "x", x, f32::MIN);
+                    changed |= num_field(ui, "y", y, f32::MIN);
+                    changed |= num_field(ui, "w", width, 1.0);
+                    changed |= num_field(ui, "h", height, 1.0);
+                }
+                Shape::Circle { x, y, radius, .. } => {
+                    changed |= num_field(ui, "x", x, f32::MIN);
+                    changed |= num_field(ui, "y", y, f32::MIN);
+                    changed |= num_field(ui, "radius", radius, 1.0);
+                }
+            }
+        }
+        if ui.button("Delete shape").clicked() {
+            self.ed.active_shapes_mut().remove(i);
+            self.ed.selected_shape = None;
+            changed = true;
+        }
+        if changed {
+            self.ed.is_dirty = true;
+            self.title_dirty = true;
+        }
     }
 
     fn ui_sprite_controls(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -732,7 +806,7 @@ impl EditorApp {
 
         let pointer = response.interact_pointer_pos().or(response.hover_pos());
         let world = pointer.map(|p| self.view.screen_to_world(rect, p));
-        let snapped = world.map(snap);
+        let snapped = world.map(|w| snap(w, self.ed.level.grid_size));
 
         self.canvas_interact(ctx, &response, world, snapped);
         self.paint_world(&painter, rect, world);
@@ -817,12 +891,22 @@ impl EditorApp {
                         }
                     }
                 } else {
+                    // Plain click selects (or clears) the shape under the cursor
+                    // without changing its geometry.
+                    if response.clicked_by(egui::PointerButton::Primary) {
+                        self.ed.selected_shape =
+                            self.ed.active_shapes().iter().rposition(|s| s.contains(world));
+                    }
                     if response.drag_started_by(egui::PointerButton::Primary) {
                         let hit = self.ed.active_shapes().iter().rposition(|s| s.contains(world));
                         self.ed.selected_shape = hit;
                         self.ed.drag_start = Some(snapped);
+                        // Dragging a shape moves it; hold Shift to resize/redraw
+                        // it instead. Dragging empty space draws a new shape.
+                        let resize = ctx.input(|i| i.modifiers.shift);
                         self.ed.drag_action = Some(match hit {
-                            Some(i) => DragAction::RedrawShape(i),
+                            Some(i) if resize => DragAction::RedrawShape(i),
+                            Some(i) => DragAction::MoveShape(i),
                             None => DragAction::NewShape,
                         });
                     }
@@ -842,6 +926,18 @@ impl EditorApp {
                                         self.title_dirty = true;
                                         self.ed.status = format!("Placed shape ({n} total)");
                                     }
+                                }
+                                DragAction::MoveShape(i) => {
+                                    let delta = snapped - start;
+                                    if delta != Vec2D::ZERO {
+                                        if let Some(s) = self.ed.active_shapes_mut().get_mut(i) {
+                                            translate_shape(s, delta);
+                                            self.ed.is_dirty = true;
+                                            self.title_dirty = true;
+                                            self.ed.status = format!("Moved shape {i}");
+                                        }
+                                    }
+                                    self.ed.selected_shape = Some(i);
                                 }
                                 DragAction::RedrawShape(i) => {
                                     let ok = {
@@ -927,7 +1023,7 @@ impl EditorApp {
 
             // Live preview.
             if let Some(world) = world {
-                let end = snap(world);
+                let end = snap(world, self.ed.level.grid_size);
                 if self.ed.active_layer == Layer::SpritePlanning {
                     if let Some(idx) = self.ed.selected_sprite {
                         if let Some(path) = self.ed.available_sprites.get(idx) {
@@ -955,6 +1051,12 @@ impl EditorApp {
                     }
                 } else if let Some(start) = self.ed.drag_start {
                     match self.ed.drag_action {
+                        Some(DragAction::MoveShape(i)) => {
+                            if let Some(mut s) = self.ed.active_shapes().get(i).cloned() {
+                                translate_shape(&mut s, end - start);
+                                self.paint_shapes(painter, rect, std::slice::from_ref(&s), 0.5);
+                            }
+                        }
                         Some(DragAction::RedrawShape(i)) => {
                             if let Some(mut s) = self.ed.active_shapes().get(i).cloned() {
                                 if update_shape_geometry(&mut s, start, end) {
@@ -997,7 +1099,7 @@ impl EditorApp {
 
         // Crosshair at the snapped cursor.
         if let Some(world) = world {
-            let sp = self.view.world_to_screen(rect, snap(world));
+            let sp = self.view.world_to_screen(rect, snap(world, self.ed.level.grid_size));
             let st = egui::Stroke::new(1.0, col(WHITE));
             painter.line_segment([sp - egui::vec2(10.0, 0.0), sp + egui::vec2(10.0, 0.0)], st);
             painter.line_segment([sp - egui::vec2(0.0, 10.0), sp + egui::vec2(0.0, 10.0)], st);
@@ -1005,23 +1107,24 @@ impl EditorApp {
     }
 
     fn paint_grid(&self, painter: &egui::Painter, rect: egui::Rect) {
+        let grid = self.ed.level.grid_size.max(1.0);
         let tl = self.view.screen_to_world(rect, rect.min);
         let br = self.view.screen_to_world(rect, rect.max);
-        let min_x = (tl.x / GRID_SIZE).floor() as i32;
-        let max_x = (br.x / GRID_SIZE).ceil() as i32;
-        let min_y = (tl.y / GRID_SIZE).floor() as i32;
-        let max_y = (br.y / GRID_SIZE).ceil() as i32;
+        let min_x = (tl.x / grid).floor() as i32;
+        let max_x = (br.x / grid).ceil() as i32;
+        let min_y = (tl.y / grid).floor() as i32;
+        let max_y = (br.y / grid).ceil() as i32;
         let line = |major: bool| {
             egui::Stroke::new(1.0, col(LIGHTGRAY.with_alpha(if major { 0.30 } else { 0.12 })))
         };
         for ix in min_x..=max_x {
-            let x = ix as f32 * GRID_SIZE;
+            let x = ix as f32 * grid;
             let a = self.view.world_to_screen(rect, Vec2D::new(x, tl.y));
             let b = self.view.world_to_screen(rect, Vec2D::new(x, br.y));
             painter.line_segment([a, b], line(ix.rem_euclid(GRID_MAJOR_EVERY) == 0));
         }
         for iy in min_y..=max_y {
-            let y = iy as f32 * GRID_SIZE;
+            let y = iy as f32 * grid;
             let a = self.view.world_to_screen(rect, Vec2D::new(tl.x, y));
             let b = self.view.world_to_screen(rect, Vec2D::new(br.x, y));
             painter.line_segment([a, b], line(iy.rem_euclid(GRID_MAJOR_EVERY) == 0));

@@ -44,6 +44,16 @@ pub(crate) fn update_shape_geometry(shape: &mut Shape, a: Vec2D, b: Vec2D) -> bo
     }
 }
 
+/// Translate a shape's anchor by `delta`, preserving its size, ID and color.
+pub(crate) fn translate_shape(shape: &mut Shape, delta: Vec2D) {
+    match shape {
+        Shape::Rect { x, y, .. } | Shape::Circle { x, y, .. } => {
+            *x += delta.x;
+            *y += delta.y;
+        }
+    }
+}
+
 /// Build a shape from two drag endpoints, assigning a fresh random ID.
 pub(crate) fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option<Shape> {
     match tool {
