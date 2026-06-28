@@ -191,39 +191,39 @@ impl<G: Game> ApplicationHandler<Graphics> for App<G> {
                 self.time.frame();
                 let cpu_start = web_time::Instant::now();
                 let window = gfx.window_size();
-                let mut ctx = Context {
-                    dt: self.time.fixed_dt(),
-                    time: self.time.total(),
-                    fps: self.time.fps(),
-                    input: &self.input,
-                    fullscreen: gfx.window.fullscreen().is_some(),
-                    should_exit: false,
-                    toggle_fullscreen: false,
-                    window_size: (window.width, window.height),
-                    render_size: (self.config.render_width, self.config.render_height),
-                    gfx: &*gfx,
-                    renderer: &*renderer,
-                    audio: &mut self.audio,
-                };
-                let mut steps_ran = 0u32;
+                let mut should_exit = false;
+                let mut toggle_fullscreen = false;
                 while self.time.next_fixed_step() {
-                    game.update(&mut ctx);
-                    steps_ran += 1;
-                }
-                // Take the frame's requests before releasing the borrow on
-                // `self.input` (held immutably by `ctx`).
-                let should_exit = ctx.should_exit;
-                let toggle_fullscreen = ctx.toggle_fullscreen;
-
-                // Edge-triggered input (`pressed`/`released`) and per-frame
-                // deltas are only valid until an update observes them. The
-                // renderer runs every vsync tick but updates run at the fixed
-                // rate, so on displays faster than `target_ups` most render
-                // frames consume zero fixed steps. Clearing unconditionally
-                // here would wipe a press whose edge landed on such a frame
-                // before any `update` ever saw it — a dropped click/keypress.
-                // Only clear once at least one update has consumed the edges.
-                if steps_ran > 0 {
+                    {
+                        let mut ctx = Context {
+                            dt: self.time.fixed_dt(),
+                            time: self.time.total(),
+                            fps: self.time.fps(),
+                            input: &self.input,
+                            fullscreen: gfx.window.fullscreen().is_some(),
+                            should_exit: false,
+                            toggle_fullscreen: false,
+                            window_size: (window.width, window.height),
+                            render_size: (self.config.render_width, self.config.render_height),
+                            gfx: &*gfx,
+                            renderer: &*renderer,
+                            audio: &mut self.audio,
+                        };
+                        game.update(&mut ctx);
+                        should_exit |= ctx.should_exit;
+                        toggle_fullscreen |= ctx.toggle_fullscreen;
+                    }
+                    // Edge-triggered input (`pressed`/`released`) and per-frame
+                    // deltas must be observed by exactly ONE update. The
+                    // accumulator can run several fixed steps in a single
+                    // rendered frame whenever the frame is longer than the fixed
+                    // step (i.e. fps < `target_ups`); clearing only after the
+                    // whole loop would let every sub-step re-observe the same
+                    // press, so a key typed once would register multiple times.
+                    // Clear after each update so only the first sub-step of the
+                    // frame sees the edges. A frame that runs zero steps never
+                    // clears, preserving the edge for a later frame — so a press
+                    // is never dropped on displays faster than `target_ups`.
                     self.input.new_frame();
                 }
 
