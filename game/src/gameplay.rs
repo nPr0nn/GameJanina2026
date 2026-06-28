@@ -1,16 +1,26 @@
-//! The gameplay screen: the original shapes/texture/audio demo, wrapped so the
-//! screen manager can create, reset, update, and draw it. It owns only world
-//! state — global keys (pause, fullscreen, win/lose) are handled by the screen
-//! manager in `main.rs`.
+//! The gameplay screen: chain-lasso prototype with obstacles, squeezable
+//! circles, a movable box, and portals. World state lives here; global keys
+//! (pause, fullscreen, win/lose) are handled by the screen manager in `main.rs`.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use juni::level::DEFAULT_LEVEL_PATH;
 use juni::prelude::*;
 
+use crate::chain::Chain;
+use crate::collision::{push_rect_out_of_aabb, push_rect_out_of_circle, resolve_swept, Collider};
 use crate::player::Player;
+use crate::squeezable::Squeezables;
 
 // A custom fragment shader: an animated rainbow driven by world position and
 // `globals.time`. Same vertex/uniform interface as the built-in shape shader,
 // so it plugs straight into `begin_shader_mode`.
+/// Seconds of player stillness before the chain is allowed to freeze.
+const PLAYER_STILL_THRESHOLD: f32 = 0.01;
+/// Maximum joint displacement (px/frame) considered "totally still".
+const CHAIN_STILL_THRESHOLD: f32 = 0.01;
+
 const RAINBOW_SHADER: &str = r#"
 struct Globals {
     proj: mat4x4<f32>,
@@ -60,25 +70,76 @@ pub struct Gameplay {
     /// The level authored in the `editor` crate, in world coordinates. Drawn
     /// through the game camera, the same way the editor authored it.
     level: Level,
+    chains: Vec<Chain>,
+    chain_anchor: Vec2D,
+    prev_player_pos: Vec2D,
+    player_still_for: f32,
+    /// Static obstacles in world space. Chains and the player both collide
+    /// with these; chain joints wrap around them naturally.
+    obstacles: Vec<Rect>,
+    /// Round objects that get crushed when a chain loops tight around them.
+    squeezables: Squeezables,
+    /// Running squeeze tally, shared with the squeeze listener so the HUD can
+    /// display it. Demonstrates the event/listener wiring.
+    squeeze_count: Rc<Cell<u32>>,
+    /// Scratch buffer for the per-frame collider set (blocks + live objects),
+    /// reused to avoid a heap allocation every update.
+    colliders: Vec<Collider>,
+    test_movable: crate::movable::MovableBox,
 }
 
 impl Gameplay {
     pub fn new(ctx: &mut Context) -> Self {
         let cow_texture = ctx.load_texture_from_memory(include_bytes!("assets/vaca.png"));
+        let test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
+        let chain_anchor = Vec2D::new(640.0, 100.0);
+        let mut player = Player::new(cow_texture.clone());
+        // Start close to the anchor so all chains begin with visible slack.
+        player.pos = Vec2D::new(640.0, 150.0);
+        // Three chains sharing the same anchor but with different lengths and tints.
+        let chains = vec![
+            Chain::new(chain_anchor, player.pos, 1200.0, 6.0, RED),
+            Chain::new(chain_anchor, player.pos, 1700.0, 6.0, LIME),
+            Chain::new(chain_anchor, player.pos, 2200.0, 6.0, SKYBLUE),
+        ];
+        // Two solid blocks the player and chains can collide with.
+        // Placed within reach of all three chains (max 2200 px from anchor).
+        let obstacles = vec![
+            Rect::new(450.0, 220.0, 90.0, 90.0),
+            Rect::new(720.0, 310.0, 110.0, 70.0),
+        ];
+
+        let mut squeezables = Squeezables::new();
+        squeezables.spawn(Vec2D::new(640.0, 480.0), 45.0);
+        let squeeze_count = Rc::new(Cell::new(0u32));
+        let counter = squeeze_count.clone();
+        squeezables.on_squeeze(move |_| {
+            counter.set(counter.get() + 1);
+        });
+
+        let prev_player_pos = player.pos;
+
         Self {
             x: 100.0,
             dir: 1.0,
+            test_movable,
             mouse: Vec2D::ZERO,
-            // Compile the custom shader once, up front (raylib's LoadShader).
             rainbow: ctx.load_shader_from_memory(RAINBOW_SHADER),
-            // Embed + decode the texture and sound once.
             cow: cow_texture.clone(),
-            player: Player::new(cow_texture.clone()),
+            player,
             pop: ctx.load_sound_from_memory(include_bytes!("assets/bolha.wav")),
             spin: 0.0,
             zoom: 1.0,
             fps: 0,
             level: load_level(),
+            chains,
+            chain_anchor,
+            prev_player_pos,
+            player_still_for: 0.0,
+            obstacles,
+            squeezables,
+            squeeze_count,
+            colliders: Vec::new(),
         }
     }
 
@@ -88,8 +149,23 @@ impl Gameplay {
         self.x = 100.0;
         self.dir = 1.0;
         self.player = Player::new(self.cow.clone());
+        self.player.pos = Vec2D::new(640.0, 150.0);
+        self.chains = vec![
+            Chain::new(self.chain_anchor, self.player.pos, 1200.0, 6.0, RED),
+            Chain::new(self.chain_anchor, self.player.pos, 1700.0, 6.0, LIME),
+            Chain::new(self.chain_anchor, self.player.pos, 2200.0, 6.0, SKYBLUE),
+        ];
+        self.test_movable = crate::movable::MovableBox::new(Rect::new(200.0, 400.0, 50.0, 50.0));
         self.spin = 0.0;
         self.zoom = 1.0;
+        self.obstacles = vec![
+            Rect::new(450.0, 220.0, 90.0, 90.0),
+            Rect::new(720.0, 310.0, 110.0, 70.0),
+        ];
+        self.squeezables.revive_all();
+        self.squeeze_count.set(0);
+        self.prev_player_pos = self.player.pos;
+        self.player_still_for = 0.0;
     }
 
     /// Advance the world one fixed step. Only called while actually playing, so
@@ -103,16 +179,92 @@ impl Gameplay {
             ctx.play_sound(&self.pop);
         }
 
-        // Player movement.
-        self.player.update(ctx);
+        // Track how long the player has been still.
+        if self.player.pos.distance_squared(self.prev_player_pos) > 1e-4 {
+            self.player_still_for = 0.0;
+            self.prev_player_pos = self.player.pos;
+        } else {
+            self.player_still_for += ctx.dt;
+        }
 
-        // Spin the rotating cow at 90 deg/sec.
+        // Build the collider set: blocks + living squeezables.
+        self.colliders.clear();
+        self.colliders
+            .extend(self.obstacles.iter().map(|&r| Collider::Aabb(r)));
+        self.squeezables.extend_colliders(&mut self.colliders);
+
+        // Move the player against blocks, then push out of round objects.
+        let move_dir = self.player.input_direction(ctx);
+        let vel = move_dir * self.player.speed * ctx.dt;
+        self.player.pos =
+            resolve_swept(self.player.pos, self.player.shape, vel, &self.obstacles);
+        for (center, radius) in self.squeezables.alive() {
+            if let Some((new_pos, _)) =
+                push_rect_out_of_circle(self.player.pos, self.player.shape, center, radius)
+            {
+                self.player.pos = new_pos;
+            }
+        }
+
+        // Simulate chains only while the player is moving or the chain is still
+        // settling. Once the player stops and the chains go totally still, freeze
+        // them to avoid micro-oscillations and save work.
+        let chains_frozen = self.player_still_for >= PLAYER_STILL_THRESHOLD
+            && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
+        for chain in &mut self.chains {
+            chain.set_start(self.chain_anchor);
+            chain.set_end(self.player.pos);
+            if !chains_frozen {
+                chain.update(ctx.dt, &self.colliders);
+            }
+        }
+
+        // Clamp the player to each chain's remaining free length.
+        for _ in 0..4 {
+            let mut target = self.player.pos;
+            for chain in &self.chains {
+                let (tether, free_len) = chain.player_tether();
+                let dist = tether.distance(target);
+                if dist > free_len {
+                    let dir = (target - tether).try_normalize().unwrap_or(-Vec2D::Y);
+                    target = tether + dir * free_len;
+                }
+            }
+            let delta = target - self.player.pos;
+            if delta.length_squared() < 1e-4 {
+                break; // converged
+            }
+            self.player.pos =
+                resolve_swept(self.player.pos, self.player.shape, delta, &self.obstacles);
+        }
+
+        // Push the player out of any overlapping block or object.
+        for &rect in &self.obstacles {
+            if let Some((new_pos, _)) =
+                push_rect_out_of_aabb(self.player.pos, self.player.shape, rect)
+            {
+                self.player.pos = new_pos;
+            }
+        }
+        for (center, radius) in self.squeezables.alive() {
+            if let Some((new_pos, _)) =
+                push_rect_out_of_circle(self.player.pos, self.player.shape, center, radius)
+            {
+                self.player.pos = new_pos;
+            }
+        }
+
+        for chain in &mut self.chains {
+            chain.set_end(self.player.pos);
+        }
+
+        // Crush any object a chain has cinched tight.
+        self.squeezables.update(&self.chains);
+
         self.spin += 90.0 * ctx.dt;
 
-        // Mouse wheel zooms the camera in/out (clamped).
         self.zoom = (self.zoom + ctx.mouse_wheel_move() * 0.1).clamp(0.1, 4.0);
 
-        // Fixed-timestep movement: 240 virtual px/sec, bouncing in [100, 1080].
         self.x += self.dir * 240.0 * ctx.dt;
         if self.x > 1080.0 {
             self.x = 1080.0;
@@ -121,12 +273,24 @@ impl Gameplay {
             self.x = 100.0;
             self.dir = 1.0;
         }
+
+        self.test_movable.update(ctx);
+
+        // Push the movable box when the player walks into it.
+        let player_rect = Rect::new(self.player.pos.x, self.player.pos.y, self.player.shape.x, self.player.shape.y);
+        let box_rect = self.test_movable.rect;
+        if player_rect.intersects(&box_rect) {
+            let impulse = self.player.velocity * self.player.player_speed * ctx.dt;
+            self.test_movable.push(impulse);
+            self.player.player_speed = 200.0; // Slow down while pushing
+        } else {
+            self.player.player_speed = 500.0; // Restore normal speed
+        }
     }
 
     pub fn draw(&self, canvas: &mut Canvas) {
-        canvas.clear_background(RED);
+        canvas.clear_background(WHITE);
 
-        // A 2D camera following the player and zooming with the wheel.
         let camera = Camera2D {
             target: self.player.pos + Vec2D::new(50.0, 50.0),
             offset: Vec2D::new(640.0, 360.0),
@@ -135,23 +299,10 @@ impl Gameplay {
         };
         canvas.begin_mode_2d(camera);
 
-        canvas.rectangle(60.0, 60.0, 300.0, 180.0, SKYBLUE);
-        canvas.rectangle_from_rect(Rect::new(60.0, 300.0, 300.0, 180.0), GOLD);
-        canvas.triangle(
-            Vec2D::new(640.0, 120.0),
-            Vec2D::new(540.0, 320.0),
-            Vec2D::new(740.0, 320.0),
-            MAROON,
-        );
-        canvas.quad(
-            Vec2D::new(820.0, 120.0),
-            Vec2D::new(1120.0, 120.0),
-            Vec2D::new(1060.0, 320.0),
-            Vec2D::new(760.0, 320.0),
-            DARKGREEN,
-        );
+        for &rect in &self.obstacles {
+            canvas.rectangle_from_rect(rect, DARKGRAY);
+        }
 
-        // Animated rainbow quad via the custom shader.
         canvas.begin_shader_mode(&self.rainbow);
         canvas.quad(
             Vec2D::new(400.0, 300.0),
@@ -162,8 +313,15 @@ impl Gameplay {
         );
         canvas.end_shader_mode();
 
-        canvas.regular_polygon(Vec2D::new(1140.0, 480.0), 5, 70.0, -90.0, ORANGE);
-        canvas.draw_texture_ex(&self.cow, Vec2D::new(520.0, 230.0), 180.0, 6.0, WHITE);
+        for (pos, radius) in self.squeezables.alive() {
+            canvas.circle(pos, radius, MAGENTA);
+            canvas.circle(pos, radius - 6.0, PINK);
+        }
+
+        for chain in &self.chains {
+            chain.draw(canvas);
+        }
+        canvas.circle(self.chain_anchor, 12.0, GOLD);
 
         let size = self.cow.width() as f32 * 4.0;
         canvas.draw_texture_pro(
@@ -180,17 +338,22 @@ impl Gameplay {
         canvas.line(center, cursor, 5.0, DARKBLUE);
 
         canvas.rectangle(self.x, 520.0, 100.0, 100.0, RED);
+
         self.player.draw(canvas);
 
-        // The level authored in the editor. Its shapes are in world
-        // coordinates, so it's drawn inside the camera — pan/zoom move it with
-        // the rest of the scene, matching what the editor showed.
         self.level.draw(canvas);
 
+        self.test_movable.draw(canvas);
         canvas.end_mode_2d();
 
-        // HUD (screen space).
         canvas.text(&format!("FPS: {}", self.fps), 20.0, 20.0, 28.0, LIME);
+        canvas.text(
+            &format!("SQUEEZED: {}", self.squeeze_count.get()),
+            20.0,
+            52.0,
+            28.0,
+            MAGENTA,
+        );
         canvas.text(
             "WASD move · wheel zoom · P pause · K defeat · L win",
             20.0,
