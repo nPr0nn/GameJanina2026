@@ -6,7 +6,10 @@
 // between them. Everything is driven by the keyboard for now (see the on-screen
 // hints and the key handling in `App::update`).
 
+mod collision;
 mod player;
+mod chain;
+mod squeezable;
 mod gameplay;
 mod transition;
 mod movable;

@@ -42,7 +42,7 @@ pub use canvas::Canvas;
 pub use color::*;
 pub use input::{Key, MouseButton};
 pub use level::{Level, Shape, SpriteInstance};
-pub use math::{Rect, Vec2D};
+pub use math::{Circle, Rect, Vec2D};
 pub use renderer::{Shader, Texture};
 
 /// Common imports for using `juni`. `use juni::prelude::*;` brings the engine
