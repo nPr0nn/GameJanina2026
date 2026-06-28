@@ -338,7 +338,7 @@ fn load_sprite_textures(_ctx: &mut Context, _level: &Level) -> HashMap<String, T
 /// The level authored in the editor, embedded at build time. Embedding (rather
 /// than reading a file at runtime) keeps the level available identically on
 /// native and on the web, and independent of the working directory.
-const EDITOR_LEVEL_JSON: &str = include_str!("level.json");
+const EDITOR_LEVEL_JSON: &str = include_str!("../../level.json");
 
 /// Parse the embedded editor level. A malformed file falls back to an empty
 /// level rather than crashing the game.
