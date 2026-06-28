@@ -42,6 +42,7 @@ impl Rect {
 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Circle {
     pub center: Vec2D,
     pub radius: f32,
