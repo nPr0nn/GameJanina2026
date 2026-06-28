@@ -83,9 +83,43 @@ pub fn resolve_swept(mut pos: Vec2D, size: Vec2D, mut vel: Vec2D, obstacles: &[R
     pos
 }
 
+// ── Generic colliders (the chain wraps around any of these) ─────────────────
+
+/// A static collision shape the chain solver resolves joints against.
+///
+/// Both variants support a swept *point* query (used by the chain) and a static
+/// point push-out (used for the once-per-frame "un-stick" safety).  Adding a new
+/// obstacle shape only requires extending these two methods — every consumer
+/// (chain joints, squeeze detection) works through `Collider` and needs no
+/// changes.
+#[derive(Clone, Copy, Debug)]
+pub enum Collider {
+    Aabb(Rect),
+    Circle { center: Vec2D, radius: f32 },
+}
+
+impl Collider {
+    /// Swept point query: cast `pos` along `vel` (one frame) against this shape.
+    /// Returns first-contact time `t ∈ [0,1]` and the outward surface normal.
+    fn sweep_point(&self, pos: Vec2D, vel: Vec2D) -> Option<(f32, Vec2D)> {
+        match *self {
+            Collider::Aabb(rect) => sweep_point_aabb(pos, vel, rect),
+            Collider::Circle { center, radius } => sweep_point_circle(pos, vel, center, radius),
+        }
+    }
+
+    /// Static push-out for a point that has ended up inside the shape.
+    fn push_point(&self, pos: Vec2D) -> Option<(Vec2D, Vec2D)> {
+        match *self {
+            Collider::Aabb(rect) => push_point_out_of_aabb(pos, rect),
+            Collider::Circle { center, radius } => push_point_out_of_circle(pos, center, radius),
+        }
+    }
+}
+
 /// Swept **point** vs static AABB.  Returns first-contact time `t ∈ [0,1]` and
 /// the outward face normal, or `None` if the segment `pos → pos+vel` misses.
-fn sweep_point(pos: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f32, Vec2D)> {
+fn sweep_point_aabb(pos: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f32, Vec2D)> {
     let r = rect.x + rect.width;
     let b = rect.y + rect.height;
     let inv_x = if vel.x.abs() > 1e-8 { 1.0 / vel.x } else { f32::INFINITY };
@@ -116,15 +150,41 @@ fn sweep_point(pos: Vec2D, vel: Vec2D, rect: Rect) -> Option<(f32, Vec2D)> {
     Some((t, normal))
 }
 
-/// Move a **point** from `from` toward `to`, but never let it pass through an
-/// obstacle.  On contact it stops at the surface and slides the remaining
+/// Swept **point** vs static circle (ray–circle, entering from outside).
+fn sweep_point_circle(pos: Vec2D, vel: Vec2D, center: Vec2D, radius: f32) -> Option<(f32, Vec2D)> {
+    let d = pos - center;
+    let a = vel.dot(vel);
+    if a < 1e-12 {
+        return None;
+    }
+    let c = d.dot(d) - radius * radius;
+    // Already inside (shouldn't happen under the invariant) → immediate radial contact.
+    if c < 0.0 {
+        let n = d.try_normalize().unwrap_or(Vec2D::Y);
+        return Some((0.0, n));
+    }
+    let b = 2.0 * d.dot(vel);
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let t = (-b - disc.sqrt()) / (2.0 * a); // earliest (entry) root
+    if !(0.0..=1.0).contains(&t) {
+        return None;
+    }
+    let n = (pos + vel * t - center).try_normalize().unwrap_or(Vec2D::Y);
+    Some((t, n))
+}
+
+/// Move a **point** from `from` toward `to`, but never let it pass through any
+/// collider.  On contact it stops at the surface and slides the remaining
 /// motion along it (up to 3 surfaces per call).
 ///
-/// Returns `(final_pos, hit)` where `hit` is true if any obstacle blocked the
-/// move.  Provided `from` is outside every obstacle, `final_pos` is guaranteed
-/// to be outside every obstacle as well — this is the invariant the chain
+/// Returns `(final_pos, hit)` where `hit` is true if any collider blocked the
+/// move.  Provided `from` is outside every collider, `final_pos` is guaranteed
+/// to be outside every collider as well — this is the invariant the chain
 /// solver relies on to make joint teleporting impossible.
-pub fn move_point_swept(from: Vec2D, to: Vec2D, obstacles: &[Rect]) -> (Vec2D, bool) {
+pub fn move_point_swept(from: Vec2D, to: Vec2D, colliders: &[Collider]) -> (Vec2D, bool) {
     const SKIN: f32 = 0.02; // keep the point a hair outside the surface
     let mut pos = from;
     let mut vel = to - from;
@@ -136,8 +196,8 @@ pub fn move_point_swept(from: Vec2D, to: Vec2D, obstacles: &[Rect]) -> (Vec2D, b
         }
         let mut t_min = 1.0f32;
         let mut normal = Vec2D::ZERO;
-        for &rect in obstacles {
-            if let Some((t, n)) = sweep_point(pos, vel, rect) {
+        for c in colliders {
+            if let Some((t, n)) = c.sweep_point(pos, vel) {
                 if t < t_min {
                     t_min = t;
                     normal = n;
@@ -156,6 +216,16 @@ pub fn move_point_swept(from: Vec2D, to: Vec2D, obstacles: &[Rect]) -> (Vec2D, b
         }
     }
     (pos, hit)
+}
+
+/// Un-stick a point from every collider in `colliders` (static push-out).
+pub fn push_point_out_of_all(mut pos: Vec2D, colliders: &[Collider]) -> Vec2D {
+    for c in colliders {
+        if let Some((p, _)) = c.push_point(pos) {
+            pos = p;
+        }
+    }
+    pos
 }
 
 // ── Static push-out (for constraint corrections, not velocity movement) ─────
@@ -186,6 +256,62 @@ pub fn push_point_out_of_aabb(pos: Vec2D, rect: Rect) -> Option<(Vec2D, Vec2D)> 
     } else {
         (Vec2D::new(pos.x, b + PUSH_EPS), Vec2D::new(0.0, 1.0))
     })
+}
+
+/// Push a **point** out of a circle, radially.  Returns `(new_pos, normal)` or
+/// `None` when the point is already outside.
+pub fn push_point_out_of_circle(pos: Vec2D, center: Vec2D, radius: f32) -> Option<(Vec2D, Vec2D)> {
+    let d = pos - center;
+    let dist_sq = d.length_squared();
+    if dist_sq >= radius * radius {
+        return None;
+    }
+    let dist = dist_sq.sqrt();
+    let n = if dist > 1e-6 { d / dist } else { Vec2D::Y };
+    Some((center + n * (radius + PUSH_EPS), n))
+}
+
+/// Push an axis-aligned **rectangle** (`pos` = top-left, `size`) out of a circle.
+///
+/// Used for the player vs. round objects.  The player moves only a few pixels
+/// per frame, far less than an object radius, so a discrete closest-point
+/// push-out is robust enough here (no sweep needed).
+pub fn push_rect_out_of_circle(
+    pos: Vec2D,
+    size: Vec2D,
+    center: Vec2D,
+    radius: f32,
+) -> Option<(Vec2D, Vec2D)> {
+    // Closest point on the rectangle to the circle centre.
+    let cx = center.x.clamp(pos.x, pos.x + size.x);
+    let cy = center.y.clamp(pos.y, pos.y + size.y);
+    let d = Vec2D::new(cx, cy) - center;
+    let dist_sq = d.length_squared();
+    if dist_sq >= radius * radius {
+        return None;
+    }
+    if dist_sq > 1e-6 {
+        // Centre outside the rect: push along centre→closest-point.
+        let dist = dist_sq.sqrt();
+        let n = d / dist;
+        return Some((pos + n * (radius - dist + PUSH_EPS), n));
+    }
+    // Centre inside the rect: escape through the nearest edge.
+    let dl = center.x - pos.x;
+    let dr = (pos.x + size.x) - center.x;
+    let dt = center.y - pos.y;
+    let db = (pos.y + size.y) - center.y;
+    let m = dl.min(dr).min(dt).min(db);
+    let (n, push) = if m == dl {
+        (Vec2D::new(-1.0, 0.0), dl + radius)
+    } else if m == dr {
+        (Vec2D::new(1.0, 0.0), dr + radius)
+    } else if m == dt {
+        (Vec2D::new(0.0, -1.0), dt + radius)
+    } else {
+        (Vec2D::new(0.0, 1.0), db + radius)
+    };
+    Some((pos + n * (push + PUSH_EPS), n))
 }
 
 /// Push an axis-aligned **rectangle** (`pos` = top-left, `size`) out of an AABB.

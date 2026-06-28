@@ -1,6 +1,6 @@
 use juni::prelude::*;
 
-use crate::collision::{move_point_swept, push_point_out_of_aabb};
+use crate::collision::{move_point_swept, push_point_out_of_all, Collider};
 
 #[derive(Debug, Clone, Copy)]
 struct Joint {
@@ -151,6 +151,13 @@ impl Chain {
         (actual / self.max_length()).clamp(0.0, 1.0)
     }
 
+    /// Iterator over every joint position from the fixed anchor to the player
+    /// end.  Used by squeeze detection to measure how the chain path winds
+    /// around an object.
+    pub fn positions(&self) -> impl Iterator<Item = Vec2D> + '_ {
+        self.joints.iter().map(|j| j.pos)
+    }
+
     /// Returns the tether point and maximum reach for the player this frame.
     ///
     /// When the chain is wrapping around obstacles, the player's reachable
@@ -189,7 +196,7 @@ impl Chain {
     /// distance constraints so wrapping around corners converges naturally:
     /// joints near a corner get pushed to different faces by successive
     /// iterations, threading the chain around the obstacle automatically.
-    pub fn update(&mut self, dt: f32, obstacles: &[Rect]) {
+    pub fn update(&mut self, dt: f32, obstacles: &[Collider]) {
         let n = self.joints.len();
         if n < 2 {
             return;
@@ -204,11 +211,10 @@ impl Chain {
         // straight line crossed a block, so a one-time static push-out (nearest
         // face) is correct — it is not a gameplay teleport.
         for i in 1..n - 1 {
-            for &rect in obstacles {
-                if let Some((p, _)) = push_point_out_of_aabb(self.joints[i].pos, rect) {
-                    self.joints[i].pos = p;
-                    self.joints[i].old_pos = p;
-                }
+            let unstuck = push_point_out_of_all(self.joints[i].pos, obstacles);
+            if unstuck != self.joints[i].pos {
+                self.joints[i].pos = unstuck;
+                self.joints[i].old_pos = unstuck;
             }
         }
 

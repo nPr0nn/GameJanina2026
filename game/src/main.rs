@@ -9,6 +9,7 @@
 mod collision;
 mod player;
 mod chain;
+mod squeezable;
 mod gameplay;
 mod transition;
 mod movable;
