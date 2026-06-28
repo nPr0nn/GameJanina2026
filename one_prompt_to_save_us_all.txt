@@ -1,0 +1,36 @@
+Role: You are an expert Game Developer and Refactoring Assistant. Your task is to analyze the provided codebase repository, understand its map-loading architecture, and implement a specific fix for missing asset-to-collision connections based on a JSON data structure.
+
+Context: 
+The game designer forgot to add tags and connect object IDs properly in the map JSON. The JSON contains ID information that should connect movable objects to their respective assets and classification tags. We need to resolve this dynamically during the map-loading phase.
+
+I will provide the repository context. Your job is to locate the map-loading logic and modify it to implement the following solution.
+
+---
+
+### Strict Requirements & Logic Rules
+
+1. **Collision Overlap Detection:**
+   * For each collision shape, calculate which asset has the **highest overlap (intersection area)** with that collision box.
+   * Assign the collision's tag/classification to that corresponding asset.
+   * **Exception:** Ignore all assets whose tileset path/name starts with `"sprites/TX Tileset Grass"`.
+
+2. **Color-to-Tag Classification & Behavior:**
+   * **GOLD** `Color(255, 203, 0, 255)`: Add the tag `"mov"`. Modify the game code so these objects become "movable".
+   * **GREEN** `Color(0, 228, 48, 255)`: Add the tag `"mov2"`. Modify the game code so these objects *also* become "movable".
+   * **PURPLE** `Color(200, 122, 255, 255)`: Add the tag `"item"`.
+   * **ORANGE** `Color(255, 161, 0, 255)`: Add the tag `"bar"`.
+   * **SKYBLUE** `Color(102, 191, 255, 255)`: Add the tag `"water"`.
+   * **RED** `Color(230, 41, 55, 255)`: **Ignore completely**. Do not process RED collision boxes.
+
+3. **Edge Cases:**
+   * There are exactly two **GOLD** collision boxes that intersect with more than one asset. Ensure your overlap algorithm correctly identifies and binds them to the asset with the *largest* overlapping area.
+
+---
+
+### Your Task Execution Pipeline
+
+1. **Analyze:** Scan the repository to find where the map JSON is loaded, where collision shapes/boxes are initialized, and where asset properties (like tags or "movable" flags) are structured.
+2. **Implement:** Write the algorithmic fix directly into the map-loading sequence using the project's existing math/geometry utilities (e.g., Rect intersection methods).
+3. **Output:** * Clearly state which files need to be modified.
+   * Provide the exact, production-ready code snippets with comments explaining the logic.
+   * Explain how you handled the "movable" flag logic for both GOLD and GREEN colors based on the existing codebase architecture.
