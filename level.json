@@ -4034,9 +4034,6 @@
       "tag": "mov"
     }
   ],
-  "player_start": {
-    "x": 992.0,
-    "y": 128.0
-  },
-  "grid_size": 32.0
+  "classifications": [],
+  "player_start": null
 }

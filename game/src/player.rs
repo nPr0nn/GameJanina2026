@@ -9,13 +9,9 @@ const ANIM_WALK: u32 = 1;
 const SPRITE_SCALE: f32 = 1.0;
 
 /// How fast the player gathers speed toward the input direction (px/s²).
-/// High enough to reach full speed in ~0.1s, so starts feel immediate instead
-/// of floaty (at 500 it took a full second to wind up to `speed`).
-const ACCELERATION: f32 = 500.0;
+const ACCELERATION: f32 = 1500.0;
 /// How fast the player coasts to a stop when there is no input (px/s²).
-/// Strong, so the player stops within ~15px of release instead of gliding —
-/// the snappy stop pairs with the rest-snap to keep movement tight to the grid.
-const FRICTION: f32 = 9000.0;
+const FRICTION: f32 = 4000.0;
 /// Below this speed (px/s) the player is treated as idle (animation/facing).
 const MOVING_EPS: f32 = 1.0;
 
@@ -66,9 +62,8 @@ impl Player {
         Self {
             pos: Vec2D::ZERO,
             // Hit-box sized to the drawn duck (32×32 frame at SPRITE_SCALE 1).
-            shape: Vec2D::new(16.0, 16.0),
-            abilities: Abilities::default(),
-            speed: 150.0, // Maximum movement speed (px/s)
+            shape: Vec2D::new(28.0, 28.0),
+            speed: 500.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
             chain_offset: Vec2D::new(14.0, 14.0), // Tether at the hit-box centre
             // Loop the idle row to start; `input_direction` switches to walking.
