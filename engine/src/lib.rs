@@ -41,7 +41,7 @@ pub use camera::Camera2D;
 pub use canvas::Canvas;
 pub use color::*;
 pub use input::{Key, MouseButton};
-pub use level::{ClassificationEntry, Level, Shape, SpriteInstance};
+pub use level::{ClassificationEntry, Level, Shape, SpawnPoint, SpriteInstance};
 pub use math::{Circle, Rect, Vec2D};
 pub use renderer::{Shader, Texture};
 
@@ -51,7 +51,7 @@ pub mod prelude {
     pub use crate::color::*;
     pub use crate::{
         run, Camera2D, Canvas, Circle, ClassificationEntry, Config, Context, Game, Key, Level,
-        MouseButton, Rect, Shader, Shape, Sound, SpriteInstance, Texture, Vec2D,
+        MouseButton, Rect, Shader, Shape, Sound, SpawnPoint, SpriteInstance, Texture, Vec2D,
     };
 }
 

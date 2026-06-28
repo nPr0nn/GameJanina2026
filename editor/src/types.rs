@@ -10,13 +10,6 @@ pub(crate) enum ObjectRef {
     CollisionShape(usize),
 }
 
-/// Which field is currently being edited on the focused object.
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) enum EditMode {
-    Tag,
-    ObjectId,
-}
-
 /// The primitive the left mouse button currently places.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Tool {
@@ -34,6 +27,7 @@ pub(crate) enum DragAction {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(clippy::enum_variant_names)] // the shared "Planning" suffix is intentional
 pub(crate) enum Layer {
     SpritePlanning,
     CollisionPlanning,

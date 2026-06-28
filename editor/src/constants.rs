@@ -1,9 +1,7 @@
-//! Editor constants: canvas size, grid, palettes.
+//! Editor constants: grid, palettes, window title.
 
 use juni::prelude::*;
 
-pub(crate) const RENDER_W: u32 = 1280;
-pub(crate) const RENDER_H: u32 = 720;
 pub(crate) const GRID_SIZE: f32 = 32.0;
 pub(crate) const GRID_MAJOR_EVERY: i32 = 4;
 pub(crate) const WINDOW_TITLE: &str = "juni — level editor";
@@ -21,3 +19,7 @@ pub(crate) const LABEL_GAP: f32 = 2.0;
 
 /// Color choices for shapes, selectable with the number keys 1–6.
 pub(crate) const PALETTE: [Color; 6] = [RED, ORANGE, GOLD, LIME, SKYBLUE, VIOLET];
+
+/// Size of the player-spawn marker box drawn at the spawn point. Matches the
+/// game's player hit-box (`player.shape`) so the marker shows the real footprint.
+pub(crate) const PLAYER_MARKER_SIZE: f32 = 100.0;

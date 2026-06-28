@@ -160,6 +160,17 @@ pub struct SpriteInstance {
     pub scale: f32,
 }
 
+/// The player's spawn position in world-space pixels (top-left of the player
+/// box, matching the editor's and `draw_texture`'s top-left origin convention).
+///
+/// Stored as a plain `{ x, y }` struct rather than a [`Vec2D`] because the
+/// engine's `glam` dependency is built without its `serde` feature.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpawnPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
 /// Maps an object ID to a semantic classification tag such as `"static"`,
 /// `"movable"`, or `"cuttable"`. Authored in the editor's Classification layer.
 ///
@@ -187,6 +198,10 @@ pub struct Level {
     /// Classification tags authored in the Classification layer.
     #[serde(default)]
     pub classifications: Vec<ClassificationEntry>,
+    /// Where the player spawns, authored in the editor. `None` lets the game
+    /// fall back to its own default spawn.
+    #[serde(default)]
+    pub player_start: Option<SpawnPoint>,
 }
 
 impl Level {
@@ -216,6 +231,11 @@ impl Level {
                 inst.id = id_gen();
             }
         }
+    }
+
+    /// The authored player spawn as a [`Vec2D`], if set.
+    pub fn player_start_world(&self) -> Option<Vec2D> {
+        self.player_start.map(|p| Vec2D::new(p.x, p.y))
     }
 
     /// Return the classification tag for objects with the given `id`, if any.

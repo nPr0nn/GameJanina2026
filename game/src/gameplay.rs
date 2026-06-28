@@ -4,6 +4,7 @@
 //! layer; press F3 to draw that collision layer on top for debugging.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use juni::prelude::*;
@@ -43,6 +44,12 @@ pub struct Gameplay {
     /// The level's collision layer as colliders (world space), derived once at
     /// load. Static for the lifetime of the level.
     level_colliders: Vec<Collider>,
+    /// Sprite-instance textures, keyed by their PNG path. Loaded once at startup
+    /// from the paths the editor recorded. Empty on the web (no filesystem).
+    sprite_textures: HashMap<String, Texture>,
+    /// Player spawn in world coordinates: the level's authored point, or the
+    /// `PLAYER_START` fallback. Reused by `reset`.
+    player_start: Vec2D,
     chains: Vec<Chain>,
     prev_player_pos: Vec2D,
     player_still_for: f32,
@@ -65,12 +72,14 @@ impl Gameplay {
             32,
             32,
         );
-        let mut player = Player::new(ducky.clone());
-        // Start close to the anchor so all chains begin with visible slack.
-        player.pos = PLAYER_START;
-
         let level = load_level();
         let level_colliders = level_colliders_from(&level);
+        let sprite_textures = load_sprite_textures(ctx, &level);
+        // Spawn where the editor authored it, else the built-in default.
+        let player_start = level.player_start_world().unwrap_or(PLAYER_START);
+
+        let mut player = Player::new(ducky.clone());
+        player.pos = player_start;
 
         let mut squeezables = Squeezables::new();
         squeezables.spawn(Vec2D::new(1000.0, 550.0), 45.0);
@@ -92,6 +101,8 @@ impl Gameplay {
             loc,
             level,
             level_colliders,
+            sprite_textures,
+            player_start,
             squeezables,
             squeeze_count,
             colliders: Vec::new(),
@@ -103,7 +114,7 @@ impl Gameplay {
     /// parsed level (its collision layer never changes at runtime).
     pub fn reset(&mut self) {
         self.player = Player::new(self.ducky.clone());
-        self.player.pos = PLAYER_START;
+        self.player.pos = self.player_start;
         self.chains = new_chains(self.player.pos);
         self.zoom = 1.0;
         self.squeezables.revive_all();
@@ -225,7 +236,16 @@ impl Gameplay {
         };
         canvas.begin_mode_2d(camera);
 
-        // The sprite-planning layer authored in the editor (background).
+        // Sprite instances authored in the editor (the actual PNGs), drawn at
+        // their top-left world position and scale — the same call the editor
+        // uses, so they land pixel-identically. Drawn first, as the background.
+        for inst in &self.level.sprite_instances {
+            if let Some(tex) = self.sprite_textures.get(&inst.path) {
+                canvas.draw_texture_ex(tex, Vec2D::new(inst.x, inst.y), 0.0, inst.scale, WHITE);
+            }
+        }
+
+        // The sprite-planning layer's placeholder shapes authored in the editor.
         self.level.draw(canvas);
 
         // Debug view: overlay the level's collision layer (translucent so the
@@ -290,10 +310,35 @@ fn level_colliders_from(level: &Level) -> Vec<Collider> {
         .collect()
 }
 
+/// Load a texture for each unique sprite-instance path the editor recorded.
+///
+/// Native only: `ctx.load_texture` reads PNGs from disk (paths are relative to
+/// the working directory, where the editor saved them under `sprites/`). On the
+/// web there is no synchronous filesystem, so this returns an empty map and the
+/// sprite instances simply don't draw (the embedded level JSON still loads).
+#[cfg(not(target_arch = "wasm32"))]
+fn load_sprite_textures(ctx: &mut Context, level: &Level) -> HashMap<String, Texture> {
+    let mut cache = HashMap::new();
+    for inst in &level.sprite_instances {
+        if cache.contains_key(&inst.path) {
+            continue;
+        }
+        if let Ok(tex) = ctx.load_texture(&inst.path) {
+            cache.insert(inst.path.clone(), tex);
+        }
+    }
+    cache
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_sprite_textures(_ctx: &mut Context, _level: &Level) -> HashMap<String, Texture> {
+    HashMap::new()
+}
+
 /// The level authored in the editor, embedded at build time. Embedding (rather
 /// than reading a file at runtime) keeps the level available identically on
 /// native and on the web, and independent of the working directory.
-const EDITOR_LEVEL_JSON: &str = include_str!("new.json");
+const EDITOR_LEVEL_JSON: &str = include_str!("level.json");
 
 /// Parse the embedded editor level. A malformed file falls back to an empty
 /// level rather than crashing the game.

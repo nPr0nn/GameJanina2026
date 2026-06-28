@@ -73,37 +73,3 @@ pub(crate) fn make_shape(tool: Tool, a: Vec2D, b: Vec2D, color: Color) -> Option
         }
     }
 }
-
-/// Build a normalized rectangle from two corner points.
-pub(crate) fn rect_from_points(a: Vec2D, b: Vec2D) -> Rect {
-    let x = a.x.min(b.x);
-    let y = a.y.min(b.y);
-    let width = (a.x - b.x).abs();
-    let height = (a.y - b.y).abs();
-    Rect::new(x, y, width, height)
-}
-
-/// Clamp a rectangle to lie within `(0,0..max_w,max_h)` and have positive size.
-pub(crate) fn clamp_rect(rect: Rect, max_w: u32, max_h: u32) -> Rect {
-    let x = rect.x.clamp(0.0, max_w as f32);
-    let y = rect.y.clamp(0.0, max_h as f32);
-    let width = (rect.width.min(max_w as f32 - x)).max(1.0);
-    let height = (rect.height.min(max_h as f32 - y)).max(1.0);
-    Rect::new(x, y, width, height)
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clamp_rect_keeps_selection_inside_image() {
-        let rect = Rect::new(-5.0, -5.0, 100.0, 100.0);
-        let clamped = clamp_rect(rect, 16, 16);
-        assert_eq!(clamped.x, 0.0);
-        assert_eq!(clamped.y, 0.0);
-        assert_eq!(clamped.width, 16.0);
-        assert_eq!(clamped.height, 16.0);
-    }
-}

@@ -1,23 +1,21 @@
-//! Level loading/creation, sprite scanning, tag colors, startup config.
+//! Level loading/creation, sprite scanning, tag colors.
 
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use juni::prelude::*;
 
 use crate::constants::TAG_PALETTE;
 use crate::id::random_id;
 
+/// Result of loading (or creating) a level from disk.
 #[derive(Debug)]
-pub(crate) struct StartupConfig {
+pub(crate) struct LoadedLevel {
     pub(crate) path: String,
     pub(crate) level: Level,
     pub(crate) status: String,
 }
-
-pub(crate) static STARTUP: OnceLock<StartupConfig> = OnceLock::new();
 
 /// Build `tag_colors` from level data, ensuring `"static"` always gets the
 /// first palette slot.
@@ -31,20 +29,6 @@ pub(crate) fn build_tag_colors(level: &Level) -> HashMap<String, Color> {
         }
     }
     map
-}
-
-pub(crate) fn prompt_level_path() -> io::Result<String> {
-    loop {
-        print!("Level path: ");
-        io::stdout().flush()?;
-        let mut line = String::new();
-        io::stdin().read_line(&mut line)?;
-        let path = line.trim();
-        if !path.is_empty() {
-            return Ok(path.to_string());
-        }
-        eprintln!("A level path is required.");
-    }
 }
 
 pub(crate) fn scan_sprites(dir: &str) -> Vec<String> {
@@ -64,14 +48,14 @@ pub(crate) fn scan_sprites(dir: &str) -> Vec<String> {
     paths
 }
 
-pub(crate) fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
+pub(crate) fn load_or_create_level(path: &str) -> io::Result<LoadedLevel> {
     if Path::new(path).exists() {
         let mut level = Level::load(path)?;
         level.ensure_ids(random_id);
         let sprite_n = level.sprite_instances.len();
         let collision_n = level.collision_shapes.len();
         let class_n = level.classifications.len();
-        Ok(StartupConfig {
+        Ok(LoadedLevel {
             path: path.to_string(),
             level,
             status: format!(
@@ -87,7 +71,7 @@ pub(crate) fn load_or_create_level(path: &str) -> io::Result<StartupConfig> {
         }
         let level = Level::new();
         level.save(path)?;
-        Ok(StartupConfig {
+        Ok(LoadedLevel {
             path: path.to_string(),
             level,
             status: format!("Created {path} (new level)"),

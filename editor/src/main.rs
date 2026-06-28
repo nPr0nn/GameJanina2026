@@ -1,67 +1,56 @@
-// A tiny mouse-driven level editor for juni.
+// A mouse-driven level editor for juni, built with egui/eframe.
 //
-//   cargo run -p editor
+//   cargo run -p editor [level.json]
 //
-// Left-drag to place shapes, click a shape to select/redraw, right-click or Del/Bksp to delete, S to save.
-// Middle-drag pans; wheel zooms. Tab cycles between three layers:
-//   Sprite → Collision → Classification
+// Opens `level.json` (or the path given as the first argument), creating it if
+// it does not exist. Use File ▸ Open / Save / Save As, or the keyboard:
 //
-// Sprite layer: Shift+L loads/replaces a spritesheet/tileset PNG. L toggles the sheet
-// panel. Drag to select a tile, release to cut it into sprites/, then hide the panel
-// with L and click in the world to place.
+//   Tab cycle layer · F reset view · H help
+//   L-drag place shape · click shape to select/redraw · R-click delete
+//   M-drag pan · wheel zoom · S save · O open
 //
-// In the Classification layer:
-//   Arrows  navigate objects
-//   Enter   edit the focused object's tag
-//   I       edit the focused object's ID
-//   Tab     (while editing a tag) cycle through existing tags
-//   Delete  clear the tag on the focused object
+// Layers: Sprite → Collision → Classification. On the Sprite layer, "Load
+// spritesheet…" opens a cutter window: drag a tile, release to cut it into
+// sprites/. On the Classification layer, click an object and edit its ID/tag in
+// the side panel.
 
+mod app;
 mod classification;
 mod constants;
 mod editor;
 mod geometry;
 mod id;
 mod level_io;
-mod render;
 mod sprite_sheet;
-mod text_input;
 mod types;
 
-use juni::prelude::*;
-
-use constants::{RENDER_H, RENDER_W, WINDOW_TITLE};
+use app::{default_level_path, EditorApp};
+use constants::WINDOW_TITLE;
 use editor::Editor;
-use level_io::{load_or_create_level, prompt_level_path, STARTUP};
+use level_io::load_or_create_level;
 
-fn main() {
-    let path = match prompt_level_path() {
-        Ok(p) => p,
+fn main() -> eframe::Result<()> {
+    let path = default_level_path(std::env::args().nth(1));
+    let loaded = match load_or_create_level(&path.to_string_lossy()) {
+        Ok(l) => l,
         Err(e) => {
-            eprintln!("Failed to read level path: {e}");
+            eprintln!("Failed to open or create level at {}: {e}", path.display());
             std::process::exit(1);
         }
     };
-    let startup = match load_or_create_level(&path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to open or create level at {path}: {e}");
-            std::process::exit(1);
-        }
+    let editor = Editor::new(loaded.path, loaded.level, loaded.status);
+
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_title(WINDOW_TITLE)
+            .with_inner_size([1600.0, 900.0])
+            .with_fullscreen(true),
+        ..Default::default()
     };
-    STARTUP
-        .set(startup)
-        .expect("startup config should only be set once");
-    run::<Editor>(Config {
-        width: 1920,
-        height: 1080,
-        render_width: RENDER_W,
-        render_height: RENDER_H,
-        title: WINDOW_TITLE.to_string(),
-        target_ups: 60,
-        centered: true,
-        resizable: false,
-        msaa: 4,
-        ..Config::default()
-    });
+    eframe::run_native(
+        WINDOW_TITLE,
+        options,
+        Box::new(|cc| Ok(Box::new(EditorApp::new(cc, editor)))),
+    )
 }
