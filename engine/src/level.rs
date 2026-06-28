@@ -158,6 +158,11 @@ pub struct SpriteInstance {
     pub y: f32,
     /// Uniform scale factor (1.0 = native pixel size).
     pub scale: f32,
+    /// When `true`, this sprite is part of the flat background and is always
+    /// drawn behind every other sprite and the player (it sits out of any
+    /// depth/Y-sort). Defaults to `false` for older level files.
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// The player's spawn position in world-space pixels (top-left of the player

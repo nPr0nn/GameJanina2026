@@ -92,14 +92,14 @@ impl Squeezables {
         }
     }
 
-    /// Append a [`Collider`] for each living object so the chains wrap them.
+    /// Append a [`Collider`] for each living object. The collider is the bounding
+    /// **rectangle** of the round object (the project keeps every collider an
+    /// AABB); the circular shape is still used for the chain-squeeze test and for
+    /// drawing.
     pub fn extend_colliders(&self, out: &mut Vec<Collider>) {
         for s in &self.items {
             if s.alive {
-                out.push(Collider::Circle {
-                    center: s.pos,
-                    radius: s.radius,
-                });
+                out.push(Collider::Aabb(squeezable_rect(s.pos, s.radius)));
             }
         }
     }
@@ -110,6 +110,26 @@ impl Squeezables {
             .iter()
             .filter(|s| s.alive)
             .map(|s| (s.pos, s.radius))
+    }
+
+    /// `(item index, center, radius)` for each living object. The index is a
+    /// stable handle for [`Squeezables::translate`] when the player pushes/pulls
+    /// it this frame.
+    pub fn each_alive(&self) -> impl Iterator<Item = (usize, Vec2D, f32)> + '_ {
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.alive)
+            .map(|(i, s)| (i, s.pos, s.radius))
+    }
+
+    /// Translate the living object at `index` by `delta` (no-op if dead/missing).
+    pub fn translate(&mut self, index: usize, delta: Vec2D) {
+        if let Some(s) = self.items.get_mut(index) {
+            if s.alive {
+                s.pos += delta;
+            }
+        }
     }
 
     /// Check every living object against every chain; crush the ones a chain has
@@ -139,6 +159,11 @@ impl Squeezables {
             }
         }
     }
+}
+
+/// Bounding rectangle (top-left + size) of a round object at `center`.
+fn squeezable_rect(center: Vec2D, radius: f32) -> Rect {
+    Rect::new(center.x - radius, center.y - radius, 2.0 * radius, 2.0 * radius)
 }
 
 /// Does `chain` wind a full, tight loop around the circle at `center`?

@@ -19,9 +19,27 @@ const FRICTION: f32 = 9000.0;
 /// Below this speed (px/s) the player is treated as idle (animation/facing).
 const MOVING_EPS: f32 = 1.0;
 
+/// One boolean per unlockable player ability. Gameplay checks these before
+/// running the matching box-interaction logic, so abilities can be granted or
+/// revoked independently (e.g. as the player progresses).
+pub struct Abilities {
+    /// Shove a movable box by walking into it.
+    pub push: bool,
+    /// Drag a movable box along when walking away from a side it's latched to.
+    pub pull: bool,
+}
+
+impl Default for Abilities {
+    fn default() -> Self {
+        Self { push: true, pull: true }
+    }
+}
+
 pub struct Player {
     pub pos: Vec2D,
     pub shape: Vec2D,
+    /// Which box-interaction abilities are currently unlocked.
+    pub abilities: Abilities,
     /// Maximum movement speed in px/s (the velocity magnitude is clamped to it).
     pub speed: f32,
     /// Current movement velocity in px/s. Integrated from input via
@@ -48,7 +66,8 @@ impl Player {
         Self {
             pos: Vec2D::ZERO,
             // Hit-box sized to the drawn duck (32×32 frame at SPRITE_SCALE 1).
-            shape: Vec2D::new(28.0, 28.0),
+            shape: Vec2D::new(16.0, 16.0),
+            abilities: Abilities::default(),
             speed: 150.0, // Maximum movement speed (px/s)
             velocity: Vec2D::ZERO,
             chain_offset: Vec2D::new(14.0, 14.0), // Tether at the hit-box centre
@@ -147,6 +166,13 @@ impl Player {
         Rect::new(self.pos.x, self.pos.y, self.shape.x, self.shape.y)
     }
 
+    /// Smaller of the player sprite's drawn width/height in world px
+    /// (frame size × scale).
+    pub fn sprite_min_dim(&self) -> f32 {
+        let size = self.anim.frame_size() * SPRITE_SCALE;
+        size.x.min(size.y)
+    }
+
     /// World-space point where the chain attaches to the player.
     pub fn chain_point(&self) -> Vec2D {
         self.pos + self.chain_offset
@@ -169,8 +195,12 @@ impl Player {
             canvas.circle(self.portal_out.center, self.portal_out.radius, PURPLE);
         }
 
+        // Centre the sprite on the hit box: the 32×32 ducky frame is larger than
+        // the 28×28 collider, so offset the top-left by half the size difference.
+        let sprite_size = self.anim.frame_size() * SPRITE_SCALE;
+        let draw_pos = self.pos + (self.shape - sprite_size) * 0.5;
         self.anim
-            .draw(canvas, self.pos, SPRITE_SCALE, self.facing_left, WHITE);
+            .draw(canvas, draw_pos, SPRITE_SCALE, self.facing_left, WHITE);
     }
 
     fn detect_portal_collision(&self) -> Option<Vec2D> {
