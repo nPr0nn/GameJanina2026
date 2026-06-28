@@ -327,7 +327,13 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(gfx: &Graphics, render_width: u32, render_height: u32, msaa: u32) -> Self {
+    pub fn new(
+        gfx: &Graphics,
+        render_width: u32,
+        render_height: u32,
+        msaa: u32,
+        font_bytes: Option<&'static [u8]>,
+    ) -> Self {
         let device = &gfx.device;
         // The swapchain is linear (non-sRGB) and we encode sRGB ourselves in the
         // letterbox shader; the offscreen render texture, however, is a genuine
@@ -543,6 +549,7 @@ impl Renderer {
             render_format,
             render_width,
             render_height,
+            font_bytes,
         ));
 
         // Overlay: a single-sample shape pipeline plus a 6-vertex buffer holding

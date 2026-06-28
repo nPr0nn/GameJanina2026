@@ -24,7 +24,6 @@ use glyphon::{
 /// is metric-compatible with Arial and licensed under the SIL Open Font License,
 /// so embedding and redistributing it is fine.
 const DEFAULT_FONT: &[u8] = include_bytes!("assets/OFLGoudyStM.otf");
-const DEFAULT_FAMILY: &str = "";
 
 /// Line height as a multiple of the font size. cosmic-text needs a line height
 /// for vertical layout; raylib's default text spacing is comparable.
@@ -53,9 +52,12 @@ pub struct TextEngine {
     viewport: Viewport,
     atlas: TextAtlas,
     renderer: TextRenderer,
-    /// Fixed virtual resolution — the coordinate space text positions live in.
     render_width: u32,
     render_height: u32,
+    /// Actual family name of the loaded font, used so `Attrs` matches the right face.
+    /// Without this, `Attrs::new()` defaults to `Family::SansSerif`, which may not
+    /// match a pixel/monospace font and causes cosmic-text to skip it entirely.
+    font_family: Option<String>,
 }
 
 impl TextEngine {
@@ -64,12 +66,41 @@ impl TextEngine {
         render_format: wgpu::TextureFormat,
         render_width: u32,
         render_height: u32,
+        font_bytes: Option<&'static [u8]>,
     ) -> Self {
-        // Start empty and load only our embedded font. On native `FontSystem::new`
-        // would also scan system fonts, but loading just one keeps startup fast
-        // and the result identical everywhere (notably on wasm, which has none).
-        let mut font_system = FontSystem::new();
-        font_system.db_mut().load_font_data(DEFAULT_FONT.to_vec());
+        let font_data = font_bytes.unwrap_or(DEFAULT_FONT).to_vec();
+        let source = fontdb::Source::Binary(std::sync::Arc::new(font_data));
+        let mut font_system = FontSystem::new_with_fonts([source]);
+
+        // If the custom font failed to parse (e.g. unsupported format), fontdb
+        // ends up with zero faces and ALL text becomes invisible. Fall back to the
+        // embedded default so at least something renders.
+        if font_system.db().faces().next().is_none() {
+            log::warn!("juni: custom font failed to load — falling back to embedded default");
+            font_system
+                .db_mut()
+                .load_font_source(fontdb::Source::Binary(std::sync::Arc::new(
+                    DEFAULT_FONT.to_vec(),
+                )));
+        }
+
+        // Extract the actual family name so we can pass Family::Name to Attrs.
+        // Attrs::new() defaults to Family::SansSerif, which cosmic-text won't
+        // match against a pixel/mono font, causing the fallback font to render instead.
+        // Log all registered family names for the loaded face to aid debugging.
+        let all_families: Vec<String> = font_system
+            .db()
+            .faces()
+            .next()
+            .map(|f| f.families.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        log::info!("juni: font families in loaded face: {:?}", all_families);
+
+        // fontdb stores Name table entries in order: Mac platform (index 0) first,
+        // then Windows platform. The Mac entry often carries a legacy/incorrect name
+        // (e.g. "Alef") while the Windows entry has the correct display name.
+        // Prefer the last entry (Windows platform name) over the first (Mac platform).
+        let font_family = all_families.last().cloned();
 
         let cache = Cache::new(&gfx.device);
         let viewport = Viewport::new(&gfx.device, &cache);
@@ -93,6 +124,7 @@ impl TextEngine {
             renderer,
             render_width,
             render_height,
+            font_family,
         }
     }
 
@@ -102,8 +134,12 @@ impl TextEngine {
         let metrics = Metrics::new(font_size, font_size * LINE_HEIGHT_SCALE);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         buffer.set_size(&mut self.font_system, None, None);
-        let attrs = Attrs::new().family(Family::Name(DEFAULT_FAMILY));
-        buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, None);
+        let family_name = self.font_family.clone();
+        let attrs = match family_name.as_deref() {
+            Some(name) => Attrs::new().family(Family::Name(name)),
+            None => Attrs::new(),
+        };
+        buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Basic, None);
         buffer.shape_until_scroll(&mut self.font_system, false);
         buffer
     }

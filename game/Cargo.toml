@@ -11,3 +11,4 @@ path = "src/main.rs"
 # The engine. All graphics/audio/input/wasm plumbing lives here; the game only
 # implements the `Game` trait and calls `juni::run`.
 juni = { path = "../engine" }
+serde_json = "1"

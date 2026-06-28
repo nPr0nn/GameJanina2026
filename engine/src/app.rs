@@ -140,6 +140,7 @@ impl<G: Game> ApplicationHandler<Graphics> for App<G> {
             self.config.render_width,
             self.config.render_height,
             self.config.msaa,
+            self.config.font_bytes,
         );
 
         let window = graphics.window_size();

@@ -26,6 +26,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # `wasm-bindgen` feature, enabled below for that target).
 kira = { version = "0.12.1", default-features = false, features = ["cpal", "wav", "pcm"] }
 glyphon = "0.11"
+fontdb = "0.23"
 # Level (de)serialization, shared by the game (loads) and the editor (writes).
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
