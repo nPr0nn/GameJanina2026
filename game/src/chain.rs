@@ -1,7 +1,7 @@
 use juni::prelude::*;
 
 use crate::animation::{Animation, SpriteSheet};
-use crate::collision::{move_point_swept, push_point_out_of_all, Collider};
+use crate::collision::{move_point_swept, push_point_out_of_all, Collider, ColliderTree};
 
 #[derive(Debug, Clone, Copy)]
 struct Joint {
@@ -72,6 +72,10 @@ pub struct Chain {
     /// These skip the stiffness snap and the straightening pass so the snap
     /// cannot push them back through geometry.
     obstacle_constrained: Vec<bool>,
+    /// Reusable buffer for broad-phase quad-tree queries. Kept on the chain so
+    /// the solver does not allocate a fresh `Vec` for every one of the many
+    /// `move_point_swept` calls per frame.
+    query_buffer: Vec<Collider>,
 }
 
 impl Chain {
@@ -119,6 +123,7 @@ impl Chain {
             anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
+            query_buffer: Vec::new(),
         }
     }
 
@@ -155,6 +160,7 @@ impl Chain {
             anim,
             was_constrained: vec![false; n],
             obstacle_constrained: vec![false; n],
+            query_buffer: Vec::new(),
         }
     }
 
@@ -285,12 +291,12 @@ impl Chain {
     /// Both anchors must be pinned via [`set_start`](Self::set_start) /
     /// [`set_end`](Self::set_end) **before** calling this.
     ///
-    /// `obstacles` is a slice of axis-aligned rectangles that chain joints
+    /// `obstacles` is a spatial index over the world colliders the chain joints
     /// cannot pass through.  The collision pass runs interleaved with the
     /// distance constraints so wrapping around corners converges naturally:
     /// joints near a corner get pushed to different faces by successive
     /// iterations, threading the chain around the obstacle automatically.
-    pub fn update(&mut self, dt: f32, obstacles: &[Collider]) {
+    pub fn update(&mut self, dt: f32, obstacles: &mut ColliderTree) {
         let n = self.joints.len();
         if n < 2 {
             return;
@@ -308,7 +314,7 @@ impl Chain {
         // straight line crossed a block, so a one-time static push-out (nearest
         // face) is correct — it is not a gameplay teleport.
         for i in 1..n - 1 {
-            let unstuck = push_point_out_of_all(self.joints[i].pos, obstacles);
+            let unstuck = push_point_out_of_all(self.joints[i].pos, obstacles, &mut self.query_buffer);
             if unstuck != self.joints[i].pos {
                 self.joints[i].pos = unstuck;
                 self.joints[i].old_pos = unstuck;
@@ -328,7 +334,7 @@ impl Chain {
                 let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
                 let target = self.joints[i].pos + vel;
                 self.joints[i].old_pos = self.joints[i].pos;
-                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles);
+                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
                 self.joints[i].pos = moved;
             }
         } else {
@@ -378,7 +384,7 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
                     self.joints[i].pos = moved;
                     self.was_constrained[i] = true;
                     if hit {
@@ -395,7 +401,7 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
                     self.joints[i].pos = moved;
                     self.was_constrained[i] = true;
                     if hit {
@@ -464,7 +470,7 @@ impl Chain {
                     let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
                     let current = self.joints[i].pos;
                     let target = current + (ideal - current) * strength;
-                    let (moved, hit) = move_point_swept(current, target, obstacles);
+                    let (moved, hit) = move_point_swept(current, target, obstacles, &mut self.query_buffer);
                     self.joints[i].pos = moved;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -489,7 +495,7 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
                         self.joints[i].pos = moved;
                         if hit {
                             self.obstacle_constrained[i] = true;
@@ -503,7 +509,7 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles);
+                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
                         self.joints[i].pos = moved;
                         if hit {
                             self.obstacle_constrained[i] = true;

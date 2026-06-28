@@ -342,7 +342,7 @@ fn main() {
         // 4x MSAA looks crisp on native but is expensive on the web (WebGL2
         // resolves are bandwidth-heavy), so disable it there.
         msaa: if cfg!(target_arch = "wasm32") { 1 } else { 4 },
-        font_bytes: Some(include_bytes!("../assets/fonts/BlockyPixel.ttf")),
+        font_bytes: Some(include_bytes!("../assets/fonts/Superwide.ttf")),
         ..Config::default()
     });
 }

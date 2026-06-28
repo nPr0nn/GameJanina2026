@@ -11,7 +11,7 @@ use juni::prelude::*;
 
 use crate::animation::SpriteSheet;
 use crate::chain::Chain;
-use crate::collision::{depenetrate_aabb, push_rect_out_of_aabb, resolve_aabb, Collider};
+use crate::collision::{depenetrate_aabb, push_rect_out_of_aabb, resolve_aabb, Collider, ColliderTree};
 use crate::loc::Loc;
 use crate::player::Player;
 use crate::portal::Portals;
@@ -637,11 +637,15 @@ impl Gameplay {
         let chains_frozen = self.player_still_for >= PLAYER_STILL_THRESHOLD
             && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
         let end = self.player.chain_point();
+        // Build the broad-phase index once for all chains. The active snippet
+        // touches only a small neighbourhood of the world each frame, so this
+        // avoids the O(joints × colliders) work of the naive per-joint scan.
+        let mut tree = ColliderTree::new(&self.colliders);
         for chain in &mut self.chains {
             chain.set_start(CHAIN_ANCHOR);
             chain.set_end(end);
             if !chains_frozen {
-                chain.update_active(ctx.dt, &self.colliders);
+                chain.update_active(ctx.dt, &mut tree);
             }
             // Re-straighten frozen snippets every frame so they track how much
             // rope the active snippet is pulling through (cheap even when frozen).
