@@ -170,6 +170,10 @@ pub struct Gameplay {
     /// The level's *static* collision layer as colliders (world space), derived
     /// once at load from every collision shape not tagged `mov`.
     static_colliders: Vec<Collider>,
+    /// Spatial index over the static colliders. Rebuilt only when the level
+    /// changes (it doesn't at runtime), so the chain solver avoids rebuilding
+    /// the whole broad-phase structure every frame.
+    static_tree: ColliderTree,
     /// Pushable boxes derived from the `mov`-tagged collision shapes. Their
     /// positions change at runtime as the player shoves them.
     boxes: Vec<MovableBox>,
@@ -206,6 +210,9 @@ pub struct Gameplay {
     /// movable boxes + live squeezables), reused to avoid a heap allocation
     /// every update.
     colliders: Vec<Collider>,
+    /// Scratch buffer for the moving obstacles passed to the chain solver
+    /// (boxes + squeezables). Kept here so it is reused every frame.
+    dynamic_colliders: Vec<Collider>,
     /// Scratch buffer for the player's movement set: the static world plus live
     /// squeezables, but *not* the movable boxes (those are pushed, not slid on).
     move_colliders: Vec<Collider>,
@@ -240,6 +247,7 @@ impl Gameplay {
         );
         let level = load_level();
         let static_colliders = static_colliders_from(&level);
+        let static_tree = ColliderTree::new(&static_colliders);
         let boxes = movable_boxes_from(&level);
         let sprite_textures = load_sprite_textures(ctx, &level);
         // Spawn where the editor authored it, else the built-in default.
@@ -276,6 +284,7 @@ impl Gameplay {
             loc,
             level,
             static_colliders,
+            static_tree,
             boxes,
             sprite_textures,
             player_start,
@@ -283,6 +292,7 @@ impl Gameplay {
             squeeze_count,
             colliders: Vec::new(),
             move_colliders: Vec::new(),
+            dynamic_colliders: Vec::new(),
         }
     }
 
@@ -637,18 +647,33 @@ impl Gameplay {
         let chains_frozen = self.player_still_for >= PLAYER_STILL_THRESHOLD
             && self.chains.iter().all(|c| c.is_still(CHAIN_STILL_THRESHOLD));
         let end = self.player.chain_point();
-        // Build the broad-phase index once for all chains. The active snippet
-        // touches only a small neighbourhood of the world each frame, so this
-        // avoids the O(joints × colliders) work of the naive per-joint scan.
-        let mut tree = ColliderTree::new(&self.colliders);
+
+        // Frozen chains only straighten their snippets; no simulation means no
+        // collision queries, so skip building the broad-phase index entirely.
+        if chains_frozen {
+            for chain in &mut self.chains {
+                chain.set_start(CHAIN_ANCHOR);
+                chain.set_end(end);
+                chain.apply_pullthrough();
+            }
+            return;
+        }
+
+        // Collect the few moving obstacles (boxes + squeezables). Static
+        // geometry is indexed once in `self.static_tree`, so the chain solver
+        // does not pay to rebuild the broad-phase structure every frame.
+        self.dynamic_colliders.clear();
+        for b in &self.boxes {
+            self.dynamic_colliders.push(Collider::Aabb(b.rect));
+        }
+        self.squeezables.extend_colliders(&mut self.dynamic_colliders);
+
         for chain in &mut self.chains {
             chain.set_start(CHAIN_ANCHOR);
             chain.set_end(end);
-            if !chains_frozen {
-                chain.update_active(ctx.dt, &mut tree);
-            }
+            chain.update_active(ctx.dt, &mut self.static_tree, &self.dynamic_colliders);
             // Re-straighten frozen snippets every frame so they track how much
-            // rope the active snippet is pulling through (cheap even when frozen).
+            // rope the active snippet is pulling through.
             chain.apply_pullthrough();
         }
     }

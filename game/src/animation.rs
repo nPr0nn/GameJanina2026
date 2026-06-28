@@ -190,6 +190,20 @@ impl Animation {
     /// multiplies the texels ([`WHITE`] for none). Draws nothing if the current
     /// row is empty.
     pub fn draw(&self, canvas: &mut Canvas, pos: Vec2D, scale: f32, flip_x: bool, tint: Color) {
+        self.draw_rotated(canvas, pos, scale, flip_x, 0.0, tint);
+    }
+
+    /// Like [`draw`](Self::draw) but rotated by `rotation` degrees around the
+    /// frame's centre.
+    pub fn draw_rotated(
+        &self,
+        canvas: &mut Canvas,
+        pos: Vec2D,
+        scale: f32,
+        flip_x: bool,
+        rotation: f32,
+        tint: Color,
+    ) {
         let frames = self.sheet.frames_in_row(self.row);
         let Some(&col) = frames.get(self.current) else {
             return; // Empty row: nothing to draw.
@@ -207,7 +221,8 @@ impl Animation {
             self.sheet.frame_w * scale,
             self.sheet.frame_h * scale,
         );
-        canvas.draw_texture_pro(&self.sheet.texture, src, dest, Vec2D::ZERO, 0.0, tint);
+        let origin = Vec2D::new(dest.width * 0.5, dest.height * 0.5);
+        canvas.draw_texture_pro(&self.sheet.texture, src, dest, origin, rotation, tint);
     }
 }
 

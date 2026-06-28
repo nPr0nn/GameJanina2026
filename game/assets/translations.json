@@ -1,6 +1,7 @@
 {
   "en": {
     "game_title": "DUCK IN BOOTS",
+    "title_prompt": "PRESS ANY KEY",
     "play": "PLAY",
     "config": "CONFIG",
     "instructions": "INSTRUCTIONS",
@@ -32,6 +33,7 @@
   },
   "pt": {
     "game_title": "O PATO DE BOTAS",
+    "title_prompt": "PRESSIONE QUALQUER TECLA",
     "play": "JOGAR",
     "config": "CONFIGURAÇÕES",
     "instructions": "INSTRUÇÕES",
@@ -63,10 +65,11 @@
   },
   "ar": {
     "game_title": "البطة ذات الأحذية",
+    "title_prompt": "اضغط أي مفتاح",
     "play": "اللعب",
     "config": "الإعدادات",
     "instructions": "التعليمات",
-    "credits": "الاعتمادات",
+    "credits": "فريق العمل",
     "quit": "خروج",
     "menu_hint": "WASD / الأسهم للتنقل  ·  ENTER / انقر للاختيار  ·  ESC للخروج",
     "back_hint": "اضغط ESC أو BACKSPACE للعودة",

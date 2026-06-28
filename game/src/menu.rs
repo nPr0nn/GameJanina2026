@@ -1,14 +1,16 @@
 use juni::prelude::*;
 use juni::Rect;
+use crate::animation::{Animation, SpriteSheet};
 use crate::loc::{Lang, Loc};
 
 const RENDER_W: f32 = 1280.0;
 const RENDER_H: f32 = 720.0;
 
 // Color palette
-const BG_TOP: Color = Color::new(6, 8, 18, 255);
-const BG_BOTTOM: Color = Color::new(10, 13, 26, 255);
-const PANEL_BG: Color = Color::new(13, 17, 34, 255);
+const BG_TOP: Color = Color::new(8, 12, 28, 255);
+const BG_BOTTOM: Color = Color::new(16, 22, 46, 255);
+const BG_GLOW: Color = Color::new(28, 38, 72, 255);
+const PANEL_BG: Color = Color::new(13, 17, 34, 245);
 const GOLD: Color = Color::new(195, 150, 45, 255);
 const GOLD_DIM: Color = Color::new(80, 60, 18, 255);
 const GOLD_BRIGHT: Color = Color::new(235, 190, 65, 255);
@@ -17,21 +19,30 @@ const TEXT_NORMAL: Color = Color::new(178, 180, 200, 255);
 const TEXT_DIM: Color = Color::new(75, 78, 100, 255);
 const BTN_SEL_BG: Color = Color::new(25, 32, 65, 255);
 const STAR: Color = Color::new(180, 188, 230, 55);
+const DUCK_TINT: Color = Color::new(255, 230, 180, 200);
 
 // Layout
 const PANEL_X: f32 = 390.0;
 const PANEL_Y: f32 = 200.0;
 const PANEL_W: f32 = 500.0;
-const PANEL_H: f32 = 322.0;
+const PANEL_H: f32 = 270.0;
 const BTN_PAD_X: f32 = 28.0;
 const BTN_H: f32 = 44.0;
 const BTN_GAP: f32 = 12.0;
 const BTN_START_Y: f32 = PANEL_Y + 30.0;
 const FONT_SIZE: f32 = 26.0;
 
+// Duck rain
+const DUCK_COUNT: usize = 50;
+const DUCK_MIN_SPEED: f32 = 90.0;
+const DUCK_MAX_SPEED: f32 = 240.0;
+const DUCK_MIN_SCALE: f32 = 0.7;
+const DUCK_MAX_SCALE: f32 = 1.8;
+const DUCK_ANIM_FPS_MIN: f32 = 8.0;
+const DUCK_ANIM_FPS_MAX: f32 = 14.0;
+
 pub enum MenuAction {
     Play,
-    Config,
     Instructions,
     Credits,
     Quit,
@@ -39,6 +50,7 @@ pub enum MenuAction {
 }
 
 enum MenuState {
+    Title,
     Main,
     Language,
 }
@@ -51,10 +63,78 @@ struct MenuItem {
 
 const LANGS: [Lang; 3] = [Lang::English, Lang::Portuguese, Lang::Arabic];
 
+/// A tiny deterministic RNG so we can scatter ducks without adding a dependency.
+struct Rng {
+    state: u64,
+}
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed.max(1) }
+    }
+
+    fn next(&mut self) -> u64 {
+        // PCG-style mix: good enough for visual jitter.
+        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.state
+    }
+
+    fn gen_f32(&mut self) -> f32 {
+        (self.next() as f32) / (u64::MAX as f32)
+    }
+
+    fn range_f32(&mut self, min: f32, max: f32) -> f32 {
+        min + self.gen_f32() * (max - min)
+    }
+
+    fn gen_bool(&mut self) -> bool {
+        self.next() & 1 == 0
+    }
+}
+
+struct FallingDuck {
+    anim: Animation,
+    x: f32,
+    y: f32,
+    speed: f32,
+    scale: f32,
+    flip: bool,
+    rot: f32,
+}
+
+impl FallingDuck {
+    fn spawn(sheet: &SpriteSheet, rng: &mut Rng, above_screen: bool) -> Self {
+        let x = rng.range_f32(-20.0, RENDER_W + 20.0);
+        let y = if above_screen {
+            rng.range_f32(-RENDER_H, -40.0)
+        } else {
+            rng.range_f32(0.0, RENDER_H)
+        };
+        let speed = rng.range_f32(DUCK_MIN_SPEED, DUCK_MAX_SPEED);
+        let scale = rng.range_f32(DUCK_MIN_SCALE, DUCK_MAX_SCALE);
+        let flip = rng.gen_bool();
+        let rot = rng.range_f32(-12.0, 12.0);
+        let fps = rng.range_f32(DUCK_ANIM_FPS_MIN, DUCK_ANIM_FPS_MAX);
+        // Row 1 of the ducky sheet is the walk cycle.
+        let anim = Animation::new(sheet.clone(), 1, fps, true);
+        Self {
+            anim,
+            x,
+            y,
+            speed,
+            scale,
+            flip,
+            rot,
+        }
+    }
+}
+
 pub struct Menu {
     state: MenuState,
     title: String,
     title_width: f32,
+    title_prompt: String,
+    title_prompt_width: f32,
     items: Vec<MenuItem>,
     selected: usize,
     hint: String,
@@ -64,18 +144,21 @@ pub struct Menu {
     lang_labels: Vec<(String, f32)>,
     lang_title_width: f32,
     lang_back_hint_width: f32,
-    // icons: play, config, instructions, credits, quit
+    // icons: play, instructions, credits, quit
     icons: Vec<Texture>,
     // language button bottom-right
     lang_btn_rect: Rect,
     lang_code: String,
+    // animated duck rain
+    duck_sheet: SpriteSheet,
+    ducks: Vec<FallingDuck>,
+    duck_rng: Rng,
 }
 
 impl Menu {
     pub fn new(ctx: &Context, loc: Loc) -> Self {
         let labels = [
             loc.play(),
-            loc.config(),
             loc.instructions(),
             loc.credits(),
             loc.quit(),
@@ -119,9 +202,6 @@ impl Menu {
                 "../assets/icons/PNG/Flat/16/Play.png"
             )),
             ctx.load_texture_from_memory(include_bytes!(
-                "../assets/icons/PNG/Flat/16/Gear.png"
-            )),
-            ctx.load_texture_from_memory(include_bytes!(
                 "../assets/icons/PNG/Flat/16/Info.png"
             )),
             ctx.load_texture_from_memory(include_bytes!(
@@ -134,10 +214,31 @@ impl Menu {
 
         let lang_btn_rect = Rect::new(RENDER_W - 108.0, RENDER_H - 58.0, 95.0, 40.0);
 
+        let duck_sheet = SpriteSheet::from_memory(
+            ctx,
+            include_bytes!("../assets/ducky_spritesheet.png"),
+            32,
+            32,
+        );
+
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(42);
+        let mut rng = Rng::new(seed);
+        let ducks = (0..DUCK_COUNT)
+            .map(|_| FallingDuck::spawn(&duck_sheet, &mut rng, false))
+            .collect();
+
+        let title_prompt = loc.title_prompt().to_string();
+        let title_prompt_width = ctx.measure_text(&title_prompt, 28.0).x;
+
         Self {
-            state: MenuState::Main,
+            state: MenuState::Title,
             title: loc.game_title().to_string(),
             title_width: ctx.measure_text(loc.game_title(), 72.0).x,
+            title_prompt,
+            title_prompt_width,
             items,
             selected: 0,
             hint,
@@ -149,6 +250,9 @@ impl Menu {
             icons,
             lang_btn_rect,
             lang_code,
+            duck_sheet,
+            ducks,
+            duck_rng: rng,
         }
     }
 
@@ -157,9 +261,32 @@ impl Menu {
     }
 
     pub fn update(&mut self, ctx: &Context) -> Option<MenuAction> {
+        self.update_ducks(ctx.dt);
         match self.state {
+            MenuState::Title => self.update_title(ctx),
             MenuState::Main => self.update_main(ctx),
             MenuState::Language => self.update_language(ctx),
+        }
+    }
+
+    fn update_title(&mut self, ctx: &Context) -> Option<MenuAction> {
+        if ctx.is_key_pressed(Key::Enter)
+            || ctx.is_key_pressed(Key::Space)
+            || ctx.is_key_pressed(Key::Escape)
+            || ctx.is_mouse_button_pressed(MouseButton::Left)
+        {
+            self.state = MenuState::Main;
+        }
+        None
+    }
+
+    fn update_ducks(&mut self, dt: f32) {
+        for duck in &mut self.ducks {
+            duck.anim.update(dt);
+            duck.y += duck.speed * dt;
+            if duck.y > RENDER_H + 40.0 {
+                *duck = FallingDuck::spawn(&self.duck_sheet, &mut self.duck_rng, true);
+            }
         }
     }
 
@@ -238,25 +365,52 @@ impl Menu {
     fn action_for(&self, index: usize) -> MenuAction {
         match index {
             0 => MenuAction::Play,
-            1 => MenuAction::Config,
-            2 => MenuAction::Instructions,
-            3 => MenuAction::Credits,
+            1 => MenuAction::Instructions,
+            2 => MenuAction::Credits,
             _ => MenuAction::Quit,
         }
     }
 
     pub fn draw(&self, canvas: &mut Canvas, _loc: Loc) {
-        // Background gradient
-        canvas.quad_gradient(
-            Vec2D::new(0.0, 0.0),
-            Vec2D::new(RENDER_W, 0.0),
-            Vec2D::new(RENDER_W, RENDER_H),
-            Vec2D::new(0.0, RENDER_H),
-            BG_TOP, BG_TOP, BG_BOTTOM, BG_BOTTOM,
+        self.draw_background(canvas);
+        self.draw_ducks(canvas);
+
+        match self.state {
+            MenuState::Title => self.draw_title_screen(canvas),
+            MenuState::Main => self.draw_main_menu(canvas),
+            MenuState::Language => {
+                self.draw_main_menu(canvas);
+                self.draw_language_overlay(canvas);
+            }
+        }
+    }
+
+    fn draw_title_screen(&self, canvas: &mut Canvas) {
+        // Large centered title with shadow and a gold sheen.
+        let title_size = 96.0;
+        let title_x = (RENDER_W - self.title_width) * 0.5;
+        let title_y = 220.0;
+        canvas.text(&self.title, title_x + 4.0, title_y + 4.0, title_size, Color::new(0, 0, 0, 160));
+        canvas.text(&self.title, title_x, title_y, title_size, GOLD_BRIGHT);
+
+        // Animated prompt below the title.
+        let prompt_x = (RENDER_W - self.title_prompt_width) * 0.5;
+        let prompt_y = 360.0;
+        let pulse = ((self.ducks[0].y * 0.05).sin() * 0.5 + 0.5) * 155.0 + 100.0;
+        canvas.text(
+            &self.title_prompt,
+            prompt_x,
+            prompt_y,
+            28.0,
+            Color::new(255, 255, 255, pulse as u8),
         );
 
-        draw_stars(canvas);
+        // Bottom footer hint.
+        let hint_x = (RENDER_W - self.hint_width) * 0.5;
+        canvas.text(&self.hint, hint_x, RENDER_H - 40.0, 16.0, TEXT_DIM);
+    }
 
+    fn draw_main_menu(&self, canvas: &mut Canvas) {
         // Top border line
         canvas.rectangle(0.0, 10.0, RENDER_W, 2.0, GOLD_DIM);
 
@@ -277,7 +431,7 @@ impl Menu {
         draw_border(canvas, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, GOLD_DIM);
         canvas.rectangle(PANEL_X + 2.0, PANEL_Y, PANEL_W - 4.0, 2.0, GOLD);
 
-        // Buttons
+        // Buttons — all share the same width/height.
         for (i, item) in self.items.iter().enumerate() {
             self.draw_button(canvas, item, i);
         }
@@ -291,10 +445,40 @@ impl Menu {
 
         // Language button (bottom-right)
         self.draw_lang_button(canvas);
+    }
 
-        // Language overlay on top of everything
-        if matches!(self.state, MenuState::Language) {
-            self.draw_language_overlay(canvas);
+    fn draw_background(&self, canvas: &mut Canvas) {
+        // Deep night-sky gradient with a soft horizontal glow band.
+        canvas.quad_gradient(
+            Vec2D::new(0.0, 0.0),
+            Vec2D::new(RENDER_W, 0.0),
+            Vec2D::new(RENDER_W, RENDER_H),
+            Vec2D::new(0.0, RENDER_H),
+            BG_TOP, BG_TOP, BG_BOTTOM, BG_BOTTOM,
+        );
+
+        // Soft glow band behind the title area.
+        let band_y = 90.0;
+        let band_h = 120.0;
+        canvas.quad_gradient(
+            Vec2D::new(0.0, band_y),
+            Vec2D::new(RENDER_W, band_y),
+            Vec2D::new(RENDER_W, band_y + band_h),
+            Vec2D::new(0.0, band_y + band_h),
+            Color::new(0, 0, 0, 0),
+            Color::new(0, 0, 0, 0),
+            BG_GLOW.with_alpha(0.25),
+            BG_GLOW.with_alpha(0.25),
+        );
+
+        draw_stars(canvas);
+    }
+
+    fn draw_ducks(&self, canvas: &mut Canvas) {
+        for duck in &self.ducks {
+            // Duck silhouettes: dimmer and slightly blue-shifted so they read as background.
+            let tint = DUCK_TINT;
+            duck.anim.draw_rotated(canvas, Vec2D::new(duck.x, duck.y), duck.scale, duck.flip, duck.rot, tint);
         }
     }
 

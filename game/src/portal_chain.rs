@@ -20,7 +20,7 @@ use juni::prelude::*;
 
 use crate::animation::SpriteSheet;
 use crate::chain::Chain;
-use crate::collision::ColliderTree;
+use crate::collision::{Collider, ColliderTree};
 
 /// Bookkeeping for one frozen snippet (parallel to `snippets[i]`).
 struct FrozenMeta {
@@ -114,8 +114,13 @@ impl PortalChain {
     }
 
     /// Simulate the active snippet only.
-    pub fn update_active(&mut self, dt: f32, obstacles: &mut ColliderTree) {
-        self.active_mut().update(dt, obstacles);
+    pub fn update_active(
+        &mut self,
+        dt: f32,
+        static_tree: &mut ColliderTree,
+        dynamics: &[Collider],
+    ) {
+        self.active_mut().update(dt, static_tree, dynamics);
     }
 
     /// Tether point + remaining free length for clamping the player. Delegates

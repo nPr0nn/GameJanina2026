@@ -509,12 +509,15 @@ fn sweep_point_circle(pos: Vec2D, vel: Vec2D, center: Vec2D, radius: f32) -> Opt
 /// to be outside every collider as well — this is the invariant the chain
 /// solver relies on to make joint teleporting impossible.
 ///
+/// `static_tree` is the pre-built index of immovable world geometry;
+/// `dynamics` are the few moving objects (boxes, squeezables) scanned linearly.
 /// `scratch` is a reusable buffer for the broad-phase query results; it is
 /// cleared on entry.
 pub fn move_point_swept(
     from: Vec2D,
     to: Vec2D,
-    tree: &mut ColliderTree,
+    static_tree: &mut ColliderTree,
+    dynamics: &[Collider],
     scratch: &mut Vec<Collider>,
 ) -> (Vec2D, bool) {
     const SKIN: f32 = 0.02; // keep the point a hair outside the surface
@@ -531,11 +534,11 @@ pub fn move_point_swept(
         // swept segment. Re-query each iteration because sliding can redirect
         // the path into a different neighbourhood.
         scratch.clear();
-        tree.query(segment_bounds(pos, pos + vel), scratch);
+        static_tree.query(segment_bounds(pos, pos + vel), scratch);
 
         let mut t_min = 1.0f32;
         let mut normal = Vec2D::ZERO;
-        for c in scratch.iter() {
+        for c in scratch.iter().chain(dynamics.iter()) {
             if let Some((t, n)) = c.sweep_point(pos, vel) {
                 if t < t_min {
                     t_min = t;
@@ -559,18 +562,21 @@ pub fn move_point_swept(
 
 /// Un-stick a point from every nearby collider (static push-out).
 ///
+/// `static_tree` is the pre-built index of immovable world geometry;
+/// `dynamics` are the few moving objects scanned linearly.
 /// `scratch` is a reusable buffer for the broad-phase query results; it is
 /// cleared on entry.
 pub fn push_point_out_of_all(
     mut pos: Vec2D,
-    tree: &mut ColliderTree,
+    static_tree: &mut ColliderTree,
+    dynamics: &[Collider],
     scratch: &mut Vec<Collider>,
 ) -> Vec2D {
     // Broad phase: only colliders whose bounds contain (or nearly contain) `pos`.
     scratch.clear();
-    tree.query(point_query_bounds(pos), scratch);
+    static_tree.query(point_query_bounds(pos), scratch);
 
-    for c in scratch.iter() {
+    for c in scratch.iter().chain(dynamics.iter()) {
         if let Some((p, _)) = c.push_point(pos) {
             pos = p;
         }
@@ -788,11 +794,25 @@ mod tests {
         ];
         let mut tree = ColliderTree::new(&colliders);
         let mut scratch = Vec::new();
-        let (pos, hit) = move_point_swept(Vec2D::ZERO, Vec2D::new(30.0, 0.0), &mut tree, &mut scratch);
+        let (pos, hit) = move_point_swept(Vec2D::ZERO, Vec2D::new(30.0, 0.0), &mut tree, &[], &mut scratch);
         assert!(hit, "should hit the wall");
         assert!(
             pos.x < 10.0 && pos.x > 9.0,
             "expected to stop just before the wall, got {pos:?}"
+        );
+    }
+
+    // Dynamics are scanned linearly and still block movement.
+    #[test]
+    fn swept_point_hits_dynamic_collider() {
+        let mut tree = ColliderTree::new(&[]);
+        let dynamics = vec![Collider::Aabb(Rect::new(10.0, -10.0, 10.0, 20.0))];
+        let mut scratch = Vec::new();
+        let (pos, hit) = move_point_swept(Vec2D::ZERO, Vec2D::new(30.0, 0.0), &mut tree, &dynamics, &mut scratch);
+        assert!(hit, "should hit the dynamic collider");
+        assert!(
+            pos.x < 10.0 && pos.x > 9.0,
+            "expected to stop just before the dynamic wall, got {pos:?}"
         );
     }
 }

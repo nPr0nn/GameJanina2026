@@ -19,7 +19,6 @@ pub enum Screen {
     Win,
     Instructions,
     Credits,
-    Config,
 }
 
 enum Phase {

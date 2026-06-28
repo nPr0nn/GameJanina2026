@@ -291,12 +291,13 @@ impl Chain {
     /// Both anchors must be pinned via [`set_start`](Self::set_start) /
     /// [`set_end`](Self::set_end) **before** calling this.
     ///
-    /// `obstacles` is a spatial index over the world colliders the chain joints
-    /// cannot pass through.  The collision pass runs interleaved with the
-    /// distance constraints so wrapping around corners converges naturally:
-    /// joints near a corner get pushed to different faces by successive
-    /// iterations, threading the chain around the obstacle automatically.
-    pub fn update(&mut self, dt: f32, obstacles: &mut ColliderTree) {
+    /// `static_tree` indexes the immovable world geometry; `dynamics` are the
+    /// few moving obstacles (boxes, squeezables) scanned linearly. The collision
+    /// pass runs interleaved with the distance constraints so wrapping around
+    /// corners converges naturally: joints near a corner get pushed to different
+    /// faces by successive iterations, threading the chain around the obstacle
+    /// automatically.
+    pub fn update(&mut self, dt: f32, static_tree: &mut ColliderTree, dynamics: &[Collider]) {
         let n = self.joints.len();
         if n < 2 {
             return;
@@ -314,7 +315,7 @@ impl Chain {
         // straight line crossed a block, so a one-time static push-out (nearest
         // face) is correct — it is not a gameplay teleport.
         for i in 1..n - 1 {
-            let unstuck = push_point_out_of_all(self.joints[i].pos, obstacles, &mut self.query_buffer);
+            let unstuck = push_point_out_of_all(self.joints[i].pos, static_tree, dynamics, &mut self.query_buffer);
             if unstuck != self.joints[i].pos {
                 self.joints[i].pos = unstuck;
                 self.joints[i].old_pos = unstuck;
@@ -334,7 +335,7 @@ impl Chain {
                 let vel = (self.joints[i].pos - self.joints[i].old_pos) * retention;
                 let target = self.joints[i].pos + vel;
                 self.joints[i].old_pos = self.joints[i].pos;
-                let (moved, _) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
+                let (moved, _) = move_point_swept(self.joints[i].pos, target, static_tree, dynamics, &mut self.query_buffer);
                 self.joints[i].pos = moved;
             }
         } else {
@@ -375,7 +376,12 @@ impl Chain {
         // joint to the far side of a block.  Wrapping around corners falls out
         // for free: a blocked joint slides along the face toward the corner over
         // successive iterations.
+        // Stop iterating once corrections are sub-pixel: further passes only
+        // shuffle joints by negligible amounts.
+        const CONSTRAINT_EPS_SQ: f32 = 0.0001; // 0.01 px squared
         for _ in 0..self.constraint_iterations {
+            let mut max_move_sq = 0.0f32;
+
             // Pass A: player end → anchor.
             for i in (1..n - 1).rev() {
                 let neighbour = self.joints[i + 1].pos;
@@ -384,8 +390,10 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
+                    let old_pos = self.joints[i].pos;
+                    let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
                     self.joints[i].pos = moved;
+                    max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -401,13 +409,19 @@ impl Chain {
                 if dist_sq > sl_sq {
                     let dist = dist_sq.sqrt();
                     let target = neighbour + delta * (sl / dist);
-                    let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
+                    let old_pos = self.joints[i].pos;
+                    let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
                     self.joints[i].pos = moved;
+                    max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                     self.was_constrained[i] = true;
                     if hit {
                         self.obstacle_constrained[i] = true;
                     }
                 }
+            }
+
+            if max_move_sq < CONSTRAINT_EPS_SQ {
+                break;
             }
         }
 
@@ -470,7 +484,7 @@ impl Chain {
                     let ideal = (self.joints[i - 1].pos + self.joints[i + 1].pos) * 0.5;
                     let current = self.joints[i].pos;
                     let target = current + (ideal - current) * strength;
-                    let (moved, hit) = move_point_swept(current, target, obstacles, &mut self.query_buffer);
+                    let (moved, hit) = move_point_swept(current, target, static_tree, dynamics, &mut self.query_buffer);
                     self.joints[i].pos = moved;
                     if hit {
                         self.obstacle_constrained[i] = true;
@@ -488,6 +502,8 @@ impl Chain {
             // from one of its neighbours.  A short swept constraint pass resolves
             // those violations in-frame so they cannot feed back as wobble.
             for _ in 0..5 {
+                let mut max_move_sq = 0.0f32;
+
                 for i in (1..n - 1).rev() {
                     let neighbour = self.joints[i + 1].pos;
                     let delta = self.joints[i].pos - neighbour;
@@ -495,8 +511,10 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
+                        let old_pos = self.joints[i].pos;
+                        let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
                         self.joints[i].pos = moved;
+                        max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
                             self.obstacle_constrained[i] = true;
                         }
@@ -509,12 +527,18 @@ impl Chain {
                     if dist_sq > sl_sq {
                         let dist = dist_sq.sqrt();
                         let target = neighbour + delta * (sl / dist);
-                        let (moved, hit) = move_point_swept(self.joints[i].pos, target, obstacles, &mut self.query_buffer);
+                        let old_pos = self.joints[i].pos;
+                        let (moved, hit) = move_point_swept(old_pos, target, static_tree, dynamics, &mut self.query_buffer);
                         self.joints[i].pos = moved;
+                        max_move_sq = max_move_sq.max(moved.distance_squared(old_pos));
                         if hit {
                             self.obstacle_constrained[i] = true;
                         }
                     }
+                }
+
+                if max_move_sq < CONSTRAINT_EPS_SQ {
+                    break;
                 }
             }
 
